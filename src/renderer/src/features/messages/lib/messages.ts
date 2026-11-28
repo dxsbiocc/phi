@@ -18,6 +18,8 @@ export interface Message {
   /** Set on content package messages; each one opens its own update dialog. */
   packageType?: PackageManagerType
   packageUpdate?: PackageUpdateView
+  /** Set on app update messages so clicking opens the in-app update dialog. */
+  appUpdate?: AppUpdateCheck
   releasesUrl?: string
 }
 
@@ -86,6 +88,7 @@ export function buildMessages({
       title: messagesCopy.appUpdateAvailable(appUpdate.latestVersion),
       subtitle: messagesCopy.currentVersion(appUpdate.currentVersion),
       status: messagesCopy.appUpdateStatus,
+      appUpdate,
       releasesUrl: appUpdate.releasesUrl
     })
   }

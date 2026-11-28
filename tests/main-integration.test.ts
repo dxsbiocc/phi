@@ -73,6 +73,7 @@ import * as remoteJupyterStartJobs from '../src/main/agent/notebook/remote-jupyt
 import * as notebookAiGenerationJobs from '../src/main/agent/notebook/notebook-ai-generation-jobs'
 import type { NotebookAiGenerationJob } from '../src/shared/notebookAiJobTypes'
 import * as appUpdateCheck from '../src/main/app-update-check'
+import * as appUpdater from '../src/main/app-updater'
 import * as phiPluginDetails from '../src/main/agent/plugins/details'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
@@ -1705,6 +1706,7 @@ async function harness(
     './agent/notebook/remote-jupyter-start-jobs': remoteJupyterStartJobs,
     './agent/notebook/notebook-ai-generation-jobs': notebookAiGenerationJobs,
     './app-update-check': appUpdateCheck,
+    './app-updater': appUpdater,
     './agent/plugins/details': phiPluginDetails,
     '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/guards': sharedGuards,
@@ -7654,6 +7656,10 @@ const expectedStartupRegistrationOrder = [
   'auth:logout',
   'auth:interaction-response',
   'app:checkForUpdates',
+  'app:getUpdateDownloadState',
+  'app:downloadUpdate',
+  'app:cancelUpdateDownload',
+  'app:installUpdate',
   'app:openReleasesPage',
   'app:openWebUrl',
   'settings:get',

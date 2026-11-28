@@ -48,6 +48,11 @@ export const IPC = {
   },
   app: {
     checkForUpdates: 'app:checkForUpdates',
+    getUpdateDownloadState: 'app:getUpdateDownloadState',
+    downloadUpdate: 'app:downloadUpdate',
+    cancelUpdateDownload: 'app:cancelUpdateDownload',
+    installUpdate: 'app:installUpdate',
+    updateDownloadState: 'app:updateDownloadState',
     openReleasesPage: 'app:openReleasesPage',
     openWebUrl: 'app:openWebUrl'
   },

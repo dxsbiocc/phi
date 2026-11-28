@@ -43,7 +43,7 @@ import type {
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../shared/notebookAiJobTypes'
-import type { AppUpdateCheck } from '../shared/appUpdateTypes'
+import type { AppUpdateCheck, AppUpdateDownloadState } from '../shared/appUpdateTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type {
   RemoteDirectoryListRequest,
@@ -901,6 +901,11 @@ type RendererAuthApi = PreloadApiBase & {
   getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
   setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>
   checkForAppUpdates: () => Promise<AppUpdateCheck>
+  getAppUpdateDownloadState: () => Promise<AppUpdateDownloadState>
+  downloadAppUpdate: () => Promise<AppUpdateDownloadState>
+  cancelAppUpdateDownload: () => Promise<AppUpdateDownloadState>
+  installAppUpdate: () => Promise<void>
+  onAppUpdateDownloadState: (cb: (state: AppUpdateDownloadState) => void) => Unsubscribe
   openAppReleasesPage: (url?: string) => Promise<void>
   openWebUrl: (url: string) => Promise<void>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
@@ -1577,6 +1582,20 @@ const api: RendererAuthApi = {
   setModelEnabled: (change: ModelAvailabilityChange): Promise<ModelAvailabilitySnapshot> =>
     ipcRenderer.invoke(IPC.models.setEnabled, change),
   checkForAppUpdates: (): Promise<AppUpdateCheck> => ipcRenderer.invoke(IPC.app.checkForUpdates),
+  getAppUpdateDownloadState: (): Promise<AppUpdateDownloadState> =>
+    ipcRenderer.invoke(IPC.app.getUpdateDownloadState),
+  downloadAppUpdate: (): Promise<AppUpdateDownloadState> =>
+    ipcRenderer.invoke(IPC.app.downloadUpdate),
+  cancelAppUpdateDownload: (): Promise<AppUpdateDownloadState> =>
+    ipcRenderer.invoke(IPC.app.cancelUpdateDownload),
+  installAppUpdate: (): Promise<void> => ipcRenderer.invoke(IPC.app.installUpdate),
+  onAppUpdateDownloadState: (cb: (state: AppUpdateDownloadState) => void): Unsubscribe => {
+    const handler = (_event: unknown, state: AppUpdateDownloadState): void => cb(state)
+    ipcRenderer.on(IPC.app.updateDownloadState, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC.app.updateDownloadState, handler)
+    }
+  },
   openAppReleasesPage: (url?: string): Promise<void> =>
     ipcRenderer.invoke(IPC.app.openReleasesPage, url),
   openWebUrl: (url: string): Promise<void> => ipcRenderer.invoke(IPC.app.openWebUrl, url),

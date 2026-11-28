@@ -3447,8 +3447,10 @@ function registerApplicationAndModelIpc(): void {
 
   registerAppIpc({
     ipcMain,
-    getVersion: () => app.getVersion(),
-    openExternal: (url) => shell.openExternal(url)
+    app,
+    shell,
+    updatesDir: join(AGENT_DIR, 'updates'),
+    getMainWindow: getActiveWindow
   })
   registerSettingsIpc({
     ipcMain,

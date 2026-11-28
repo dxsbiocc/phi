@@ -55,9 +55,9 @@ export const settingsUi = defineCopy(
     versionAndUpdates: 'Version and updates',
     checking2: 'Checking…',
     checkForUpdates: 'Check for updates',
-    download: 'Download',
+    download: 'View & install',
     checkGitHubReleasesForNewVersionsDownloadAnd:
-      'Check GitHub Releases for new versions. Download and install updates manually.',
+      'Check for new Phi releases, review release notes, and download updates directly in the app.',
     light: 'Light',
     alwaysUseALightInterface: 'Always use a light interface',
     dark: 'Dark',
@@ -342,9 +342,9 @@ export const settingsUi = defineCopy(
     versionAndUpdates: '版本与更新',
     checking2: '正在检查…',
     checkForUpdates: '检查更新',
-    download: '前往下载',
+    download: '查看并更新',
     checkGitHubReleasesForNewVersionsDownloadAnd:
-      '从 GitHub Releases 检查新版本。当前版本需要手动下载安装包更新。',
+      '检查 Phi 新版本，在应用内查看更新说明、下载安装包并完成替换升级。',
     light: '浅色',
     alwaysUseALightInterface: '始终使用浅色界面',
     dark: '深色',

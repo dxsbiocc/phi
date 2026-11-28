@@ -166,7 +166,7 @@ Phi 会向你配置的模型服务商和已启用的外部 MCP 服务发送必�
 
 ## 可用状态
 
-Phi **0.2.0** 现已开启**公开测试（Public Beta）**，在 [Releases](https://github.com/dxsbiocc/phi/releases) 页面提供 **macOS（Apple Silicon）**、**Linux x64** 与 **Windows x64** 安装包。可通过 **设置 -> 通用 -> 检查更新** 手动检查新版本，覆盖安装会完整保留 `~/.phi` 中的既有数据。
+Phi **0.2.1** 现已开启**公开测试（Public Beta）**，在 [Releases](https://github.com/dxsbiocc/phi/releases) 页面提供 **macOS（Apple Silicon）**、**Linux x64** 与 **Windows x64** 安装包。可通过 **消息中心** 或 **设置 -> 通用 -> 检查更新** 打开应用内更新弹窗，直接查看版本更新说明、实时下载并校验（SHA-256）新版本安装包并完成替换升级，完整保留 `~/.phi` 中的既有数据。
 
 - **macOS Apple Silicon**（`.dmg`、`.zip`）：拖入“应用程序”即可。当前公测构建使用 ad-hoc 签名（暂未启用 Apple Developer ID 公证），首次打开如遇系统拦截，请前往 **系统设置 -> 隐私与安全性** 点击一次“仍要打开”。
 - **Linux x64**（`.AppImage`、`.deb`）：执行 `sudo apt install ./phi_*.deb`，或执行 `chmod +x Phi-*.AppImage` 后直接运行。包内已内置固定版本的 `bun`、`micromamba` 与 `phi-kernel`。

@@ -26,7 +26,7 @@ import type {
 } from './features/analysis/lib/analysisNotebookTypes'
 export type * from './features/analysis/lib/analysisNotebookTypes'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
-import type { AppUpdateCheck } from '../../shared/appUpdateTypes'
+import type { AppUpdateCheck, AppUpdateDownloadState } from '../../shared/appUpdateTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
 import type { WebLinkPreview } from '../../shared/webLinkPreviewTypes'
@@ -574,6 +574,11 @@ export interface RendererApi
   getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
   setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>
   checkForAppUpdates: () => Promise<AppUpdateCheck>
+  getAppUpdateDownloadState: () => Promise<AppUpdateDownloadState>
+  downloadAppUpdate: () => Promise<AppUpdateDownloadState>
+  cancelAppUpdateDownload: () => Promise<AppUpdateDownloadState>
+  installAppUpdate: () => Promise<void>
+  onAppUpdateDownloadState: (cb: (state: AppUpdateDownloadState) => void) => () => void
   openAppReleasesPage: (url?: string) => Promise<void>
   openWebUrl: (url: string) => Promise<void>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>

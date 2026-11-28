@@ -1,4 +1,6 @@
 import { settingsUi } from '../lib/settingsUi'
+import { AppUpdateDialog } from '../../../components/AppUpdateDialog'
+import { useAppUpdateDownload } from '../../../lib/appUpdateStore'
 import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, Stack, Typography } from '@mui/material'
 import { useState } from 'react'
@@ -17,20 +19,26 @@ function resultText(result: AppUpdateCheck): string {
   return settingsUi.unableToCheckForUpdatesValue(result.error ?? settingsUi.unknownError)
 }
 
-/** Version and manual update check; installing stays manual until the app is signed. */
+/** Version and in-app update check, release notes dialog, and verified installer download. */
 export function AppUpdateSection({
   initialResult = null
 }: {
   initialResult?: AppUpdateCheck | null
 }): React.JSX.Element {
   useUiLanguage()
+  const { downloadState } = useAppUpdateDownload()
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<AppUpdateCheck | null>(initialResult)
+  const [dialogOpen, setDialogOpen] = useState(false)
 
   const check = async (): Promise<void> => {
     setChecking(true)
     try {
-      setResult(await window.api.checkForAppUpdates())
+      const next = await window.api.checkForAppUpdates()
+      setResult(next)
+      if (next.status === 'available') {
+        setDialogOpen(true)
+      }
     } catch (error) {
       setResult({
         status: 'error',
@@ -44,6 +52,11 @@ export function AppUpdateSection({
     }
   }
 
+  const isDownloadingActive =
+    result?.status === 'available' &&
+    downloadState.stage === 'downloading' &&
+    downloadState.version === result.latestVersion
+
   return (
     <Box data-phi-app-update-section>
       <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
@@ -54,12 +67,10 @@ export function AppUpdateSection({
           {checking ? settingsUi.checking2 : settingsUi.checkForUpdates}
         </Button>
         {result?.status === 'available' && (
-          <Button
-            size="small"
-            variant="contained"
-            onClick={() => void window.api.openAppReleasesPage(result.releasesUrl)}
-          >
-            {settingsUi.download}
+          <Button size="small" variant="contained" onClick={() => setDialogOpen(true)}>
+            {isDownloadingActive && downloadState.percent !== null
+              ? `${settingsUi.download} (${downloadState.percent}%)`
+              : settingsUi.download}
           </Button>
         )}
       </Stack>
@@ -71,6 +82,7 @@ export function AppUpdateSection({
       >
         {result ? resultText(result) : settingsUi.checkGitHubReleasesForNewVersionsDownloadAnd}
       </Typography>
+      <AppUpdateDialog open={dialogOpen} update={result} onClose={() => setDialogOpen(false)} />
     </Box>
   )
 }

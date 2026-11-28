@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react'
 import { Box, Typography } from '@mui/material'
 
+import { AppUpdateDialog } from '../../components/AppUpdateDialog'
 import { PackageUpdateDialog } from '../../components/PackageUpdateDialog'
 import { SidePanelCard } from '../../components/SidePanelCard'
 import { useUiLanguage } from '../../lib/i18n'
 import { workspacePanelText } from '../../layout'
+import type { AppUpdateCheck } from '../../../../shared/appUpdateTypes'
 import type { PackageUpdateView } from '../../../../shared/packageManagerTypes'
 import { MessageIcon } from './components/MessageIcon'
 import { useMessages } from './hooks/useMessages'
@@ -21,6 +23,7 @@ export function MessagesPanel(): React.JSX.Element {
   const { packageUpdates, appUpdate, loaded, readIds, markRead, refreshPackageUpdates } =
     useMessages()
   const [selectedUpdate, setSelectedUpdate] = useState<PackageUpdateView | null>(null)
+  const [selectedAppUpdate, setSelectedAppUpdate] = useState<AppUpdateCheck | null>(null)
   const [updatingKeys, setUpdatingKeys] = useState<ReadonlySet<string>>(() => new Set())
   const updatingKeysRef = useRef(new Set<string>())
 
@@ -60,6 +63,10 @@ export function MessagesPanel(): React.JSX.Element {
     markRead(message.id)
     if (message.kind === 'package-update' && message.packageUpdate) {
       setSelectedUpdate(message.packageUpdate)
+      return
+    }
+    if (message.kind === 'app-update' && message.appUpdate) {
+      setSelectedAppUpdate(message.appUpdate)
       return
     }
     if (!message.releasesUrl) return
@@ -151,6 +158,11 @@ export function MessagesPanel(): React.JSX.Element {
         busy={selectedUpdateBusy}
         onClose={() => setSelectedUpdate(null)}
         onApply={apply}
+      />
+      <AppUpdateDialog
+        open={selectedAppUpdate !== null}
+        update={selectedAppUpdate}
+        onClose={() => setSelectedAppUpdate(null)}
       />
     </Box>
   )
