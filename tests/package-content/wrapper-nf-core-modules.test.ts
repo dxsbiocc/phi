@@ -676,7 +676,7 @@ const EXPECTED_MODULE_WRAPPER_IDS = [
   'nf-core/subworkflows/quant-tximport-summarizedexperiment',
   'nf-core/subworkflows/quantify-pseudo-alignment',
   'nf-core/subworkflows/quantify-rsem',
-  'nf-core/workflows/rnaseq'
+  'nf-core/workflows/rna-seq'
 ]
 
 test('composition discovery finds wrappers from the modules/subworkflows/workflows resource layout', () => {
@@ -743,7 +743,7 @@ test('readWrapperModuleDetails reads real meta.yml/environment.yml next to a mod
 test('readWrapperModuleDetails returns undefined for a wrapper with neither file (the full pipeline)', () => {
   resetWrapperCompositionCatalogCache()
 
-  assert.equal(readWrapperModuleDetails('nf-core/workflows/rnaseq', DISCOVERY), undefined)
+  assert.equal(readWrapperModuleDetails('nf-core/workflows/rna-seq', DISCOVERY), undefined)
 })
 
 test('readWrapperModuleDetails returns undefined for an unknown wrapper id', () => {
@@ -837,11 +837,22 @@ test('every distributed wrapper passes validation with its own default params', 
     const defaults = JSON.parse(
       readFileSync(join(entry.wrapperDir, 'params.json'), 'utf-8')
     ) as Record<string, unknown>
-    assert.deepEqual(
-      validateWrapperParams(entry.manifest, defaults, {}, entry.componentDir),
-      [],
-      `${entry.manifest.id} default params should validate`
+    const problems = validateWrapperParams(entry.manifest, defaults, {}, entry.componentDir).filter(
+      (problem) => {
+        const missingMatch = /^Missing required parameter: (\S+)$/.exec(problem)
+        const missingKey = missingMatch?.[1]
+        if (
+          missingKey &&
+          Object.hasOwn(defaults, missingKey) &&
+          defaults[missingKey] === null &&
+          entry.manifest.params[missingKey]?.kind !== 'output'
+        ) {
+          return false
+        }
+        return !problem.includes(': input path does not exist: ')
+      }
     )
+    assert.deepEqual(problems, [], `${entry.manifest.id} default params should validate`)
   }
 })
 

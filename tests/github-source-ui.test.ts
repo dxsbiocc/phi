@@ -119,6 +119,10 @@ test('catalog wiring exposes import, preview warnings, update diff, and safe rem
     'src/renderer/src/features/mcp/components/McpConnectorCatalogDialog.tsx',
     'utf8'
   )
+  const auxiliaryDialogs = readFileSync(
+    'src/renderer/src/features/mcp/components/McpCatalogAuxiliaryDialogs.tsx',
+    'utf8'
+  )
   const importer = readFileSync(
     'src/renderer/src/features/mcp/components/McpGithubImportDialog.tsx',
     'utf8'
@@ -133,7 +137,8 @@ test('catalog wiring exposes import, preview warnings, update diff, and safe rem
   )
   assert.match(addMenu, /connectorCopy.importGithubMenu/)
   assert.match(addMenu, /connectorCopy.addCustomMenu/)
-  assert.match(catalog, /McpImportedInstallDialog/)
+  assert.match(catalog, /McpCatalogAuxiliaryDialogs/)
+  assert.match(auxiliaryDialogs, /McpImportedInstallDialog/)
   assert.match(importer, /connectorCopy.importSource/)
   assert.match(importer, /connectorCopy.repositoryUrl/)
   assert.match(importer, /connectorCopy.unsignedImportHint/)

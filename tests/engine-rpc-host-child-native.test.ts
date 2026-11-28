@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 
-import { RpcHostChildDispatch, type RpcHostDispatchCall } from '../src/main/agent/engine/phi-extension/extensions/rpc-host-child-dispatch'
+import {
+  RpcHostChildDispatch,
+  type RpcHostDispatchCall
+} from '../src/main/agent/engine/phi-extension/extensions/rpc-host-child-dispatch'
 import {
   createRpcChildHostStartRequest,
   parseRpcChildHostCancelReceipt,
@@ -138,11 +141,8 @@ test('cancellation tombstones both a future start and a concurrently validating 
   await before.dispatch.cancel(before.request, before.context)
   assert.equal(before.dispatch.isCancelled(before.request.id), true)
   assert.equal(
-    parseRpcChildHostCancelReceipt(
-      JSON.stringify(before.notifications[0]),
-      before.request,
-      config
-    ).state,
+    parseRpcChildHostCancelReceipt(JSON.stringify(before.notifications[0]), before.request, config)
+      .state,
     'quiescent'
   )
   await assert.rejects(before.dispatch.start(before.request, before.context), /exact idle root/)

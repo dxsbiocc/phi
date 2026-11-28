@@ -119,7 +119,8 @@ test('settings dialog can open directly on provider configuration', () => {
 
   assert.match(markup, /Provider/)
   assert.doesNotMatch(markup, /Provider 配置/)
-  assert.match(markup, /aria-label="刷新状态"/)
+  assert.match(markup, /data-phi-providers-refresh-button="true"/)
+  assert.match(markup, /aria-label="(?:刷新状态|正在加载模型启用状态…)"/)
   assert.match(markup, /aria-label="添加 Provider"/)
   assert.doesNotMatch(markup, />刷新状态<|>添加 Provider</)
   assert.doesNotMatch(markup, /以 Markdown 形式描述助手/)

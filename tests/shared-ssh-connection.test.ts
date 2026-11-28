@@ -7,10 +7,7 @@ import type {
   RemoteStdioProcess
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import { connectSharedSshSession } from '../src/main/agent/wrappers/shared-ssh-connection'
-import {
-  setConnectionEventSink,
-  type ConnectionEvent
-} from '../src/main/agent/connection-events'
+import { setConnectionEventSink, type ConnectionEvent } from '../src/main/agent/connection-events'
 
 function fakeServer(host: string): {
   config: RemoteConnectionConfig

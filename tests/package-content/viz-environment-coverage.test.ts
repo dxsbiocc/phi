@@ -84,7 +84,10 @@ function declaredRNamespaces(spec: EnvironmentSpec): Set<string> {
   return names
 }
 
-function lockedRNamespaces(dir: string, platform: (typeof PHI_LOCK_PLATFORMS)[number]): Set<string> {
+function lockedRNamespaces(
+  dir: string,
+  platform: (typeof PHI_LOCK_PLATFORMS)[number]
+): Set<string> {
   const lockPath = join(dir, 'locks', `${platform}.txt`)
   const parsed = parseExplicitLock(readFileSync(lockPath, 'utf8'))
   if (!parsed.ok) assert.fail(`${lockPath}: ${parsed.errors.join('\n')}`)
@@ -184,7 +187,9 @@ test('every visualization R template import is provided by plugin:viz declaratio
   const spec = parseEnv(VIZ_ENV_DIR)
   const declared = declaredRNamespaces(spec)
   const lockedByPlatform = new Map(
-    PHI_LOCK_PLATFORMS.map((platform) => [platform, lockedRNamespaces(VIZ_ENV_DIR, platform)] as const)
+    PHI_LOCK_PLATFORMS.map(
+      (platform) => [platform, lockedRNamespaces(VIZ_ENV_DIR, platform)] as const
+    )
   )
   const files = rFiles(VIZ_R_DIR)
   assert.ok(files.length > 0, `no R templates found under ${VIZ_R_DIR}`)
@@ -213,7 +218,9 @@ test('phi-r stays a lean R notebook and tidyverse base without single-cell or so
   const spec = parseEnv(PHI_R_DIR)
   const dependencies = new Set(spec.dependencies.map(condaDependencyName))
   assert.deepEqual(
-    ['r-irkernel', 'r-tidyverse', 'r-patchwork'].filter((dependency) => !dependencies.has(dependency)),
+    ['r-irkernel', 'r-tidyverse', 'r-patchwork'].filter(
+      (dependency) => !dependencies.has(dependency)
+    ),
     []
   )
   for (const removed of ['bioconductor-singlecellexperiment', 'r-seurat', 'r-sf']) {

@@ -53,7 +53,8 @@ export interface EnvSetupWslToolOptions {
 }
 
 export interface WslSetupRpcResult {
-  status: 'already_ready' | 'completed' | 'needs_reboot_or_init' | 'declined' | 'unsupported' | 'failed'
+  status:
+    'already_ready' | 'completed' | 'needs_reboot_or_init' | 'declined' | 'unsupported' | 'failed'
   action: WslSetupAction
   command?: string
   wslStatus?: WslProbe['status']
@@ -128,7 +129,8 @@ async function runEnvSetupWsl(
         isError: true
       }
     }
-    const isError = result.status === 'declined' || result.status === 'failed' || result.status === 'unsupported'
+    const isError =
+      result.status === 'declined' || result.status === 'failed' || result.status === 'unsupported'
     return {
       content: [{ type: 'text', text: result.message }],
       ...(isError ? { isError: true } : {}),
@@ -171,11 +173,10 @@ export function wslArgsForAction(
 async function defaultRunElevatedWsl(wslArgs: readonly string[]): Promise<void> {
   const psArgs = wslArgs.map((arg) => `'${arg.replaceAll("'", "''")}'`).join(', ')
   const script = `$p = Start-Process -FilePath 'wsl.exe' -Verb RunAs -Wait -PassThru -ArgumentList @(${psArgs}); if ($p.ExitCode -ne 0) { exit $p.ExitCode }`
-  await execFileAsync(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    { timeout: 15 * 60 * 1000, windowsHide: false }
-  )
+  await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    timeout: 15 * 60 * 1000,
+    windowsHide: false
+  })
 }
 
 /** Host RPC handler for `environments.setupWsl`. */
@@ -246,7 +247,8 @@ export async function handleWslSetupRequest(
       action,
       command: spec.display,
       wslStatus: before.status,
-      message: '用户取消了 WSL2 自动配置。如不想安装 WSL2，可在「设置 → 远程主机」配置远程 Linux/Slurm 服务器。'
+      message:
+        '用户取消了 WSL2 自动配置。如不想安装 WSL2，可在「设置 → 远程主机」配置远程 Linux/Slurm 服务器。'
     }
   }
 

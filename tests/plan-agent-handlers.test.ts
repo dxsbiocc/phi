@@ -19,9 +19,13 @@ test('a stopped plan state with undefined optional fields encodes as a response 
     agentRuns: {} as never,
     requireLoadedSession: () => undefined
   })
-  const result = await handlers['planRuns.stop']!({ runId: 'run-1' }, {} as never, {
-    sessionId: 'kernel-1'
-  } as never)
+  const result = await handlers['planRuns.stop']!(
+    { runId: 'run-1' },
+    {} as never,
+    {
+      sessionId: 'kernel-1'
+    } as never
+  )
   assert.deepEqual(result, {
     id: 'run-1',
     sessionId: 'kernel-1',

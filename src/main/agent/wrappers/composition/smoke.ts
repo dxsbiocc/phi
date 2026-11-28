@@ -96,7 +96,18 @@ export function checkWrapperStatic(entry: WrapperCompositionEntry): SmokeIssue[]
       issues.push(issue('error', 'params', error))
     } else if (params) {
       for (const problem of validateWrapperParams(entry.manifest, params, {}, entry.componentDir)) {
-        issues.push(issue('error', 'params', problem))
+        const missingMatch = /^Missing required parameter: (\S+)$/.exec(problem)
+        const missingKey = missingMatch?.[1]
+        if (
+          missingKey &&
+          Object.hasOwn(params, missingKey) &&
+          params[missingKey] === null &&
+          entry.manifest.params[missingKey]?.kind !== 'output'
+        ) {
+          continue
+        }
+        const level = problem.includes(': input path does not exist: ') ? 'warn' : 'error'
+        issues.push(issue(level, 'params', problem))
       }
     }
   }

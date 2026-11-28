@@ -64,7 +64,9 @@ function checkInputPath(
   value: unknown,
   componentDir: string
 ): string | undefined {
-  if (param.kind !== 'input' || typeof value !== 'string') return undefined
+  if (param.kind !== 'input' || param.type === 'string' || typeof value !== 'string') {
+    return undefined
+  }
   if (URL_SCHEME.test(value) || GLOB_CHARS.test(value) || value.includes('${')) return undefined
   const full = isAbsolute(value) ? value : resolve(componentDir, value)
   return existsSync(full) ? undefined : `${key}: input path does not exist: ${value}`

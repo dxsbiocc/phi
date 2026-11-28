@@ -123,7 +123,6 @@ export function agentTaskFromArgs(args: unknown): string | undefined {
   return typeof task === 'string' && task.trim() ? task.trim() : undefined
 }
 
-
 export function isAgentDelegationStart(summary: Record<string, unknown>): boolean {
   return (
     summary.type === 'tool_execution_start' &&

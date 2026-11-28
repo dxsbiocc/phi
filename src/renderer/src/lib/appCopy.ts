@@ -14,7 +14,7 @@ const english = {
   homePromptNotStarted:
     'The new conversation was interrupted before your message was sent. Your text is still in the box; send it again.',
   homePromptNotSent:
-    'Your first message was not sent. It is in the new conversation\'s box; send it again.',
+    "Your first message was not sent. It is in the new conversation's box; send it again.",
   loadSettingsFailed: 'Could not load general settings',
   loadEnvironmentFailed: 'Could not load the workspace environment',
   detectEnvironmentFailed: 'Could not detect the environment again',

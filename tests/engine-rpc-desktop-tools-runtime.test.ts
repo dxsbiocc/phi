@@ -114,13 +114,14 @@ test('an invalid remote runtime binding is denied without local execution', () =
     }
   })
   assert.throws(
-    () => controller.runSkill({
-      ...identity,
-      requestId: 'invalid-call',
-      skill: 'remote-demo',
-      script: 'run.sh',
-      args: []
-    }),
+    () =>
+      controller.runSkill({
+        ...identity,
+        requestId: 'invalid-call',
+        skill: 'remote-demo',
+        script: 'run.sh',
+        args: []
+      }),
     /No local execution fallback was used/
   )
   assert.equal(opens, 0)

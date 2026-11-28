@@ -16,7 +16,7 @@ const featuredMcpConnectors = [
   [
     'biorender',
     'BioRender',
-    '搜索科学素材并制作科研插图',
+    'Search biomedical icons and templates to build scientific figures in BioRender',
     'BioRender',
     '设计创作',
     '需要登录',
@@ -25,18 +25,18 @@ const featuredMcpConnectors = [
   ],
   [
     'biorxiv',
-    'bioRxiv',
-    '检索 bioRxiv 与 medRxiv 预印本',
-    'Anthropic',
+    'bioRxiv & medRxiv',
+    'Search and browse bioRxiv and medRxiv life-science preprints, version histories, and peer-reviewed journal links',
+    'Phi Packages',
     '健康与生命科学',
     '无需登录',
-    'https://hcls.mcp.claude.com/biorxiv/mcp',
-    'https://www.biorxiv.org'
+    'https://phi.omicsagent.cn/biorxiv/mcp',
+    'https://github.com/dxsbiocc/phi-packages'
   ],
   [
     'browser-use',
     'Browser Use',
-    '让云端浏览器自动完成网页任务',
+    'Automate multi-step web browsing, form submission, and page extraction in a cloud browser',
     'Browser Use',
     '生产力',
     '需要凭据',
@@ -45,8 +45,8 @@ const featuredMcpConnectors = [
   ],
   [
     'cancer-omics',
-    'Cancer omics',
-    '检索 GDC、cBioPortal 和 PDC 的癌症组学数据',
+    'Cancer Omics',
+    'Query open cancer genomics and proteomics metadata across NCI GDC, cBioPortal, and PDC',
     'Phi Packages',
     '健康与生命科学',
     '无需登录',
@@ -56,7 +56,7 @@ const featuredMcpConnectors = [
   [
     'canva',
     'Canva',
-    '在线搜索、创建设计并导出成品',
+    'Search templates, create and resize visual designs, and export finished assets in Canva',
     'Canva',
     '设计创作',
     '需要登录',
@@ -66,7 +66,7 @@ const featuredMcpConnectors = [
   [
     'cbioportal',
     'cBioPortal',
-    '查询癌症基因组研究、样本与临床数据',
+    'Explore cancer genomics studies, patient cohorts, somatic mutations, and clinical attributes',
     'cBioPortal',
     '健康与生命科学',
     '需要登录',
@@ -76,17 +76,17 @@ const featuredMcpConnectors = [
   [
     'clinical-trials',
     'Clinical Trials',
-    '检索 ClinicalTrials.gov 临床试验注册信息',
-    'Anthropic',
+    'Search ClinicalTrials.gov study protocols, eligibility criteria, interventions, endpoints, and posted trial results',
+    'Phi Packages',
     '健康与生命科学',
     '无需登录',
-    'https://hcls.mcp.claude.com/clinical_trials/mcp',
-    'https://clinicaltrials.gov'
+    'https://phi.omicsagent.cn/clinical-trials/mcp',
+    'https://github.com/dxsbiocc/phi-packages'
   ],
   [
     'composio',
     'Composio Connect',
-    '一个入口接入 1000+ 款常用应用',
+    'Connect to 1,000+ SaaS tools and developer apps through a single managed MCP endpoint',
     'Composio',
     '生产力',
     '需要登录',
@@ -96,7 +96,7 @@ const featuredMcpConnectors = [
   [
     'epigenomics',
     'Epigenomics',
-    '检索 ENCODE 与 Roadmap 表观基因组数据',
+    'Search ENCODE and Roadmap Epigenomics experiments, files, and biosample metadata',
     'Phi Packages',
     '健康与生命科学',
     '无需登录',
@@ -106,7 +106,7 @@ const featuredMcpConnectors = [
   [
     'excalidraw',
     'Excalidraw',
-    '绘制并导出手绘风格示意图',
+    'Create, edit, and export hand-drawn flowcharts, architecture diagrams, and sketches',
     'Excalidraw',
     '设计创作',
     '无需登录',
@@ -116,7 +116,7 @@ const featuredMcpConnectors = [
   [
     'figma',
     'Figma',
-    '获取设计上下文并生成图表',
+    'Inspect Figma frames, components, and layout specs or generate diagrams in FigJam',
     'Figma',
     '设计创作',
     '需要登录',
@@ -126,7 +126,7 @@ const featuredMcpConnectors = [
   [
     'firecrawl',
     'Firecrawl',
-    '抓取网页并提取结构化内容',
+    'Scrape web pages, crawl entire sites, and extract clean Markdown or structured data',
     'Firecrawl',
     '生产力',
     '需要凭据',
@@ -136,7 +136,7 @@ const featuredMcpConnectors = [
   [
     'linear',
     'Linear',
-    '管理问题、项目与团队工作流',
+    'Search, create, and update issues, projects, cycles, and team workflows in Linear',
     'Linear',
     '生产力',
     '需要登录',
@@ -146,7 +146,7 @@ const featuredMcpConnectors = [
   [
     'metabolomics',
     'Metabolomics',
-    '检索 MetaboLights 代谢组学研究数据',
+    'Browse EMBL-EBI MetaboLights study, assay, and file metadata for open metabolomics datasets',
     'Phi Packages',
     '健康与生命科学',
     '无需登录',
@@ -156,7 +156,7 @@ const featuredMcpConnectors = [
   [
     'notion',
     'Notion',
-    '搜索、读取并整理工作区内容',
+    'Search, read, create, and organize pages and databases across a Notion workspace',
     'Notion',
     '生产力',
     '需要登录',
@@ -166,7 +166,7 @@ const featuredMcpConnectors = [
   [
     'ols4',
     'OLS4',
-    '检索本体术语、层级与语义相似类',
+    'Search biomedical ontology terms, hierarchies, cross-references, and semantically similar classes',
     'EMBL-EBI',
     '健康与生命科学',
     '无需登录',
@@ -174,9 +174,19 @@ const featuredMcpConnectors = [
     'https://www.ebi.ac.uk/ols4/mcp'
   ],
   [
+    'omics-sniffer',
+    'Omics Sniffer',
+    'Search harmonized public multi-omics datasets, samples, and file artifacts across 30+ repositories',
+    'Phi Packages',
+    '健康与生命科学',
+    '无需登录',
+    'https://phi.omicsagent.cn/omics-sniffer/mcp',
+    'https://github.com/dxsbiocc/phi-packages'
+  ],
+  [
     'open-targets',
     'Open Targets Platform',
-    '检索靶点、疾病与药物关联证据',
+    'Query human genetics, pathway, expression, and clinical drug evidence linking targets and diseases',
     'Open Targets',
     '健康与生命科学',
     '无需登录',
@@ -186,7 +196,7 @@ const featuredMcpConnectors = [
   [
     'proteomics',
     'Proteomics',
-    '检索 PRIDE 与 HPA 蛋白质组数据',
+    'Search PRIDE Archive proteomics projects and Human Protein Atlas gene and protein summaries',
     'Phi Packages',
     '健康与生命科学',
     '无需登录',
@@ -196,17 +206,17 @@ const featuredMcpConnectors = [
   [
     'pubmed',
     'PubMed',
-    '检索生物医学文献、摘要与开放全文',
-    'Anthropic',
+    'Search NCBI PubMed biomedical literature, open-access PMC full text, citations, and PubTator 3.0 entity annotations',
+    'Phi Packages',
     '健康与生命科学',
     '无需登录',
-    'https://pubmed.mcp.claude.com/mcp',
-    'https://pubmed.ncbi.nlm.nih.gov'
+    'https://phi.omicsagent.cn/pubmed/mcp',
+    'https://github.com/dxsbiocc/phi-packages'
   ],
   [
     'rcsb-mcp',
     'RCSB PDB',
-    '检索 PDB 结构、配体与序列数据',
+    'Search experimental 3D macromolecular structures, ligands, sequences, and metadata in RCSB PDB',
     'RCSB PDB',
     '健康与生命科学',
     '无需登录',
@@ -216,7 +226,7 @@ const featuredMcpConnectors = [
   [
     'serpapi',
     'SerpApi',
-    '获取多个搜索引擎的实时结构化结果',
+    'Fetch real-time structured search results from Google, Google Scholar, and other search engines',
     'SerpApi',
     '生产力',
     '需要凭据',
@@ -226,7 +236,7 @@ const featuredMcpConnectors = [
   [
     'string-db',
     'STRING',
-    '检索蛋白质互作、同源物与功能富集',
+    'Query protein-protein interaction networks, cross-species homologs, and functional enrichment',
     'STRING',
     '健康与生命科学',
     '无需登录',
@@ -236,7 +246,7 @@ const featuredMcpConnectors = [
   [
     'tavily',
     'Tavily',
-    '联网搜索并提取网页内容',
+    'Search the live web, map site pages, and extract clean article text for research workflows',
     'Tavily',
     '生产力',
     '需要凭据',
@@ -245,8 +255,8 @@ const featuredMcpConnectors = [
   ],
   [
     'transcriptomics-single-cell',
-    'Transcriptomics and single-cell',
-    '检索 GTEx、CELLxGENE 等单细胞组学数据',
+    'Transcriptomics and Single-Cell',
+    'Query GTEx expression and eQTLs alongside CELLxGENE, CellGuide, HCA, and HuBMAP single-cell atlases',
     'Phi Packages',
     '健康与生命科学',
     '无需登录',

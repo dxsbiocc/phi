@@ -109,7 +109,10 @@ export function createRpcSessionVerifierHarness(options: {
     reference: RemoteSessionReference,
     signal: AbortSignal
   ): Promise<SessionVerificationProof>
-  verifyAttachment(target: RecoveryAttachment, signal: AbortSignal): Promise<SessionVerificationProof>
+  verifyAttachment(
+    target: RecoveryAttachment,
+    signal: AbortSignal
+  ): Promise<SessionVerificationProof>
   commitAttachment(): void
 } {
   const identity = Object.freeze({ ...options.identity })

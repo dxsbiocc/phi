@@ -49,8 +49,6 @@ const DETAIL_LABELS = new Set([
   '技能',
   '连接器',
   '资源',
-  '说明',
-  '错误',
   '版本',
   '操作',
   '失败原因',
@@ -74,8 +72,6 @@ const DETAIL_LABELS = new Set([
   'Skill',
   'Connector',
   'Resource',
-  'Description',
-  'Error',
   'Version',
   'Action',
   'Failure'

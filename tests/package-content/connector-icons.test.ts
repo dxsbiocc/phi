@@ -11,13 +11,16 @@ function sha256(data: Buffer): string {
 
 test('migrated connector payloads retain original logo hashes and patch versions', () => {
   const attribution = readFileSync(join(process.cwd(), 'docs/content-icons.md'), 'utf8')
-  const records = [
-    ...attribution.matchAll(
+  const [migrationSection, gatewaySection = ''] = attribution.split(
+    '## Phi omics MCP gateway icons'
+  )
+  const migratedRecords = [
+    ...migrationSection.matchAll(
       /`(resources\/connectors\/[^`]+)`\s*\|\s*`([a-f0-9]{64})`\s*\|\s*(\d+)/g
     )
   ]
-  assert.equal(records.length, 15)
-  for (const [, path, hash, size] of records) {
+  assert.equal(migratedRecords.length, 12)
+  for (const [, path, hash, size] of migratedRecords) {
     const data = readFileSync(join(packageContentRoot(), path))
     assert.equal(sha256(data), hash, path)
     assert.equal(data.length, Number(size), path)
@@ -27,5 +30,17 @@ test('migrated connector payloads retain original logo hashes and patch versions
     )
     // The logo migration bumped each payload off 1.0.0; later catalog edits may bump it again.
     assert.doesNotMatch(manifest, /^version: 1\.0\.0$/m, path)
+  }
+
+  const gatewayRecords = [
+    ...gatewaySection.matchAll(
+      /`(resources\/connectors\/[^`]+)`\s*\|\s*`([a-f0-9]{64})`\s*\|\s*(\d+)/g
+    )
+  ]
+  assert.equal(gatewayRecords.length, 9)
+  for (const [, path, hash, size] of gatewayRecords) {
+    const data = readFileSync(join(packageContentRoot(), path))
+    assert.equal(sha256(data), hash, path)
+    assert.equal(data.length, Number(size), path)
   }
 })

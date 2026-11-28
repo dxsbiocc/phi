@@ -155,7 +155,10 @@ test('diagnoseLocalEnvironment reports Windows WSL2 blocker, managed envs, and s
   })
   assert.equal(wslOnly?.code, 'wsl_no_distro')
 
-  const profileGuidance = buildNextflowWindowsProfileGuidance({ profile: 'docker', remoteHosts: [] })
+  const profileGuidance = buildNextflowWindowsProfileGuidance({
+    profile: 'docker',
+    remoteHosts: []
+  })
   assert.equal(profileGuidance.options[0]?.recommended, true)
 })
 
@@ -165,7 +168,13 @@ test('buildEnvDiagnoseTool validates parameters and formats host diagnostic repo
     wsl: { status: 'missing', message: 'WSL2 is not installed.' },
     hostDependencies: [{ id: 'wsl', label: 'WSL2', status: 'missing' }],
     managedEnvironments: [
-      { ref: 'phi:nextflow@1', name: 'phi-nextflow', source: 'official', state: 'absent', runtime: 'wsl2' }
+      {
+        ref: 'phi:nextflow@1',
+        name: 'phi-nextflow',
+        source: 'official',
+        state: 'absent',
+        runtime: 'wsl2'
+      }
     ],
     remoteHosts: [{ id: 'h1', label: 'Cluster', hostAlias: 'slurm-01' }],
     guidance: buildWslRemediationGuidance({

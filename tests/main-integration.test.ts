@@ -90,6 +90,7 @@ import { validRemoteAbsolutePath } from '../src/main/agent/remote-workspace-boun
 import { isRemotePathInside } from '../src/main/agent/remote-path-containment'
 import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
 import { assertBoundaryIdentity } from './helpers/remoteBoundaryIdentity'
+import * as appCapabilityWiring from '../src/main/agent/packages/app-capability-wiring'
 import * as capabilityApproval from '../src/main/agent/packages/capability-approval'
 import * as capabilityHost from '../src/main/agent/packages/capability-host'
 import * as capabilityService from '../src/main/agent/packages/capability-service'
@@ -2031,6 +2032,10 @@ async function harness(
       },
       getCoreAuthoringSkillDir: (): string =>
         path.join(process.cwd(), 'resources', 'skills', 'create-wrapper'),
+      getCoreSkillDirs: (): string[] => [
+        path.join(process.cwd(), 'resources', 'skills', 'create-wrapper'),
+        path.join(process.cwd(), 'resources', 'skills', 'environment-setup')
+      ],
       getBundledAgentsDir: (): string => path.join(process.cwd(), 'resources', 'agents'),
       getBundledResourceDir: (name: string): string => path.join(process.cwd(), 'resources', name),
       createInMemoryRuntimeSessionManager: (cwd: string): { file: string; cwd: string } => ({
@@ -2286,6 +2291,9 @@ async function harness(
     },
     './agent/host-requests/missing-tool-prompt': {
       createMissingToolPrompt: () => async () => ({ action: 'cancel' })
+    },
+    './agent/host-requests/mcp-auth-prompt': {
+      createMcpAuthPrompt: () => async () => ({ action: 'cancel' })
     },
     './agent/missing-tool-runtime': {
       createMissingToolRuntime: () => ({
@@ -2931,6 +2939,21 @@ async function harness(
     './agent/packages/wrapper-tree': {
       // A fresh installation has no domain wrapper tree before a catalog choice.
       getWrapperTreeOwnershipPath: (): string => '/isolated/agent/wrappers/tree.json'
+    },
+    './agent/content/env-build-tool': {
+      handleEnvironmentBuildRequest: async (): Promise<unknown> => {
+        throw new Error('env_build is mocked')
+      }
+    },
+    './agent/content/env-diagnose-tool': {
+      handleEnvironmentDiagnoseRequest: async (): Promise<unknown> => {
+        throw new Error('env_diagnose is mocked')
+      }
+    },
+    './agent/content/env-setup-wsl-tool': {
+      handleWslSetupRequest: async (): Promise<unknown> => {
+        throw new Error('env_setup_wsl is mocked')
+      }
     },
     './agent/content/env-request': {
       ADD_PACKAGES: '添加',
@@ -3745,6 +3768,15 @@ async function harness(
     },
     './agent/packages/mutation-queue': {
       runPackageMutation: <T>(task: () => Promise<T>): Promise<T> => task()
+    },
+    './agent/packages/app-capability-wiring': {
+      createAppCapabilityWiring: (wiringOptions: appCapabilityWiring.AppCapabilityWiringOptions) =>
+        appCapabilityWiring.createAppCapabilityWiring({
+          ...wiringOptions,
+          createCapabilityService: (deps) =>
+            (options.capabilityServiceCreate ?? capabilityService.createCapabilityService)(deps),
+          searchOfficialCatalog: async () => ({ matches: [], available: false })
+        })
     },
     './agent/packages/capability-approval': capabilityApproval,
     './agent/packages/capability-host': capabilityHost,
@@ -8384,7 +8416,7 @@ test('main IPC exposes additive plugin details with global skill enablement', as
   const environment = (
     plugins[0]?.usedEnvironments as Array<Record<string, unknown>> | undefined
   )?.[0]
-  assert.deepEqual(environment?.channels, ['conda-forge', 'bioconda'])
+  assert.deepEqual(environment?.channels, ['conda-forge'])
   assert.ok(
     ((environment?.dependencyManifest as { dependencies?: unknown[] } | undefined)?.dependencies
       ?.length ?? 0) > 0

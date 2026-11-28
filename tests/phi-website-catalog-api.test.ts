@@ -354,7 +354,11 @@ test('catalog failures, timeouts, oversized responses, invalid inputs, and incon
 test('wrapper groups named by a path (nf-core/rnaseq) list and open; unsafe paths do not', async () => {
   const groups = wrapperGroups()
   const [item] = groups.items as Record<string, unknown>[]
-  Object.assign(item, { suite: 'nf-core/rnaseq', category: 'workflows', categories: { workflows: 1 } })
+  Object.assign(item, {
+    suite: 'nf-core/rnaseq',
+    category: 'workflows',
+    categories: { workflows: 1 }
+  })
   groups.categories = [{ id: 'workflows', label: '工作流', count: 1 }]
   const listed = await data(
     getOfficialWebsiteWrapperGroups({ category: 'workflows' }, options(groups))

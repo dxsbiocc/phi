@@ -61,13 +61,14 @@ test('official skill groups preserve website order and labels while fallback sta
   assert.deepEqual(officialSkillCatalogGroups(websiteGroups), websiteGroups)
   assert.equal(resolveSkillCatalogGroupId(websiteGroups, 'science'), 'science')
   assert.equal(resolveSkillCatalogGroupId(websiteGroups, 'missing'), 'nextflow')
-  assert.deepEqual(fallbackSkillCatalogGroups(23), [
-    { id: 'all', label: 'All Skills', count: 23 }
-  ])
+  assert.deepEqual(fallbackSkillCatalogGroups(23), [{ id: 'all', label: 'All Skills', count: 23 }])
 })
 
 test('official browse metadata resolves installation only through the matching registry entry', () => {
-  assert.equal(registryPackageForOfficialSkill(websiteSkill, registryPackages)?.title, 'Registry Scanpy')
+  assert.equal(
+    registryPackageForOfficialSkill(websiteSkill, registryPackages)?.title,
+    'Registry Scanpy'
+  )
   assert.equal(
     registryPackageForOfficialSkill({ ...websiteSkill, id: 'browse-only' }, registryPackages),
     undefined

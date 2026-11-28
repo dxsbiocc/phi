@@ -4,7 +4,8 @@ import { condaSpecOf, isPipDependency, parseEnvironmentRef } from '../envs'
 export async function resolveRemoteBaseEnvironment(
   ref: string,
   pluginId: string | undefined,
-  agentDir: string
+  agentDir: string,
+  options?: { environmentsDir?: string }
 ): Promise<{ packages: readonly string[]; channels: readonly string[] }> {
   const parsed = parseEnvironmentRef(ref)
   if (parsed.kind === 'project') {
@@ -19,7 +20,8 @@ export async function resolveRemoteBaseEnvironment(
   }
   const descriptor = describeEnvironment(ref, {
     agentDir,
-    ...(pluginId ? { pluginId } : {})
+    ...(pluginId ? { pluginId } : {}),
+    ...(options?.environmentsDir ? { environmentsDir: options.environmentsDir } : {})
   })
   const conda = condaSpecOf(descriptor.spec)
   if (conda.dependencies.some(isPipDependency)) {

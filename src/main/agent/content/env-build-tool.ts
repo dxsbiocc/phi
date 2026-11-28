@@ -96,7 +96,10 @@ async function runEnvBuild(
   }
   const pluginId = optionalNonEmptyString(input.pluginId)
   if (input.pluginId !== undefined && !pluginId) {
-    return { content: [{ type: 'text', text: 'pluginId must be a non-empty string' }], isError: true }
+    return {
+      content: [{ type: 'text', text: 'pluginId must be a non-empty string' }],
+      isError: true
+    }
   }
   const reason = optionalNonEmptyString(input.reason)
 

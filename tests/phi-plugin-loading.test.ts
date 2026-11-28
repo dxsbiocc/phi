@@ -85,6 +85,9 @@ test('installed plugin names and verified trust appear before a delayed environm
       if (name.endsWith('/shared/errorCodes')) return { errorMessage }
       if (name === '../lib/phiPlugins') return pluginHelpers
       if (name === '../lib/pluginCopy') return { pluginCopy }
+      if (name === '../../jobs/hooks/useBackgroundJobsData') {
+        return { refreshBackgroundJobs: async () => undefined }
+      }
       throw new Error(`Unexpected module ${name}`)
     },
     window: {

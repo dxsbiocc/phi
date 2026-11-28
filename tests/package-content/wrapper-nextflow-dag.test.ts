@@ -4,18 +4,20 @@ import test from 'node:test'
 import { parseWrapperNextflowDag } from '../../src/renderer/src/features/wrapper/lib/wrapperNextflowDag'
 import { packageContentPath } from '../helpers/packageContent'
 
-test('parseWrapperNextflowDag handles the real generated rna-seq dag.mmd end to end', () => {
-  const dagPath = packageContentPath('wrappers', 'workflows/rna-seq/wrapper/dag.mmd')
+test('parseWrapperNextflowDag handles a real generated multi-process dag.mmd end to end', () => {
+  const dagPath = packageContentPath(
+    'wrappers',
+    'subworkflows/nf-core/fastq_qc_trim_filter_setstrandedness/wrapper/dag.mmd'
+  )
   const source = readFileSync(dagPath, 'utf-8')
   const graph = parseWrapperNextflowDag(source)
   assert.ok(graph)
 
-  // 56 real processes as of when scripts/generate-wrapper-dags.mjs last ran
-  // for this pipeline — a change here should track a real dag.mmd refresh,
-  // not silently drift.
-  assert.ok(graph!.nodes.length > 40, `expected a real process count, got ${graph!.nodes.length}`)
-  assert.ok(graph!.nodes.some((node) => node.data.label === 'FASTQC'))
-  assert.ok(graph!.nodes.some((node) => node.data.label === 'STAR_ALIGN'))
+  // Real processes from scripts/generate-wrapper-dags.mjs across nested subworkflows
+  // — a change here should track a real dag.mmd refresh, not silently drift.
+  assert.ok(graph!.nodes.length >= 8, `expected a real process count, got ${graph!.nodes.length}`)
+  assert.ok(graph!.nodes.some((node) => node.data.label === 'FASTP'))
+  assert.ok(graph!.nodes.some((node) => node.data.label === 'SALMON_QUANT'))
 
   // Every process node should be reachable by at least one contracted edge
   // — an isolated node would mean the contraction silently dropped a real

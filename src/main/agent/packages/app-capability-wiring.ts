@@ -67,6 +67,9 @@ export interface AppCapabilityWiringOptions {
   featuredApiKeyVerifiedStatus?: (id: string) => Promise<boolean>
   resolveRun: (runtimeSessionId: string) => CapabilityRunBinding
   onResourcesChanged: (context: PhiHostRequestContext) => void
+  createCapabilityService?: typeof createCapabilityService
+  prepareContentPackageInstall?: typeof prepareContentPackageInstall
+  searchOfficialCatalog?: typeof searchOfficialCatalog
 }
 
 function tryApiKeyConnector(id: string, url: string): ApiKeyConnectorConfig | undefined {
@@ -330,12 +333,16 @@ export function createAppCapabilityWiring(options: AppCapabilityWiringOptions): 
   const assertCurrent = (context: PhiHostRequestContext): void =>
     capabilityHost.assertCurrent(context)
 
-  const capabilityService = createCapabilityService({
+  const buildService = options.createCapabilityService ?? createCapabilityService
+  const prepareInstall = options.prepareContentPackageInstall ?? prepareContentPackageInstall
+  const searchOfficial = options.searchOfficialCatalog ?? searchOfficialCatalog
+
+  const capabilityService = buildService({
     agentDir: options.agentDir,
     appVersion: options.appVersion,
     loadRegistries: options.loadPackageRegistries,
     searchOfficial: (query, type, signal) =>
-      searchOfficialCatalog(query, type, signal, { fetch: options.officialRegistryFetch }),
+      searchOfficial(query, type, signal, { fetch: options.officialRegistryFetch }),
     inspectMcpAuth: (params) => inspectConnectorAuthStatus(params, options, checkApiKeyVerified),
     confirm: (request, context) =>
       options.confirmAgentModuleInstallation(
@@ -344,7 +351,7 @@ export function createAppCapabilityWiring(options: AppCapabilityWiringOptions): 
         context
       ),
     prepare: (registry, request, _options, signal) =>
-      prepareContentPackageInstall(registry, request, {
+      prepareInstall(registry, request, {
         ...options.officialContentSourceOptions(),
         fetch: (input, init) =>
           options.officialRegistryFetch(input, {

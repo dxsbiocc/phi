@@ -19,8 +19,7 @@ export type HomePromptSendDeps = {
 export const HOME_PROMPT_READY_TIMEOUT_MS = 15_000
 const READY_POLL_MS = 50
 
-const defaultWait = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms))
+const defaultWait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function waitForModelState(deps: HomePromptSendDeps): Promise<void> {
   const wait = deps.wait ?? defaultWait

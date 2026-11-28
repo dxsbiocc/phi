@@ -602,14 +602,45 @@ function serializableResourceOptions(options: ResourceLoaderOptions): Record<str
   }
 }
 
+function isAutoCompactionFields(
+  value: unknown
+): value is { enabled: boolean; thresholdPercent: number; thresholdTokens: number } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'enabled' in value &&
+    typeof value.enabled === 'boolean' &&
+    'thresholdPercent' in value &&
+    typeof value.thresholdPercent === 'number' &&
+    'thresholdTokens' in value &&
+    typeof value.thresholdTokens === 'number'
+  )
+}
+
+function toAutoCompactionReceipt(result: unknown): RuntimeAutoCompactionReceipt | undefined {
+  if (!isAutoCompactionFields(result)) return undefined
+  const defaults =
+    'defaults' in result && isAutoCompactionFields(result.defaults)
+      ? {
+          enabled: result.defaults.enabled,
+          thresholdPercent: result.defaults.thresholdPercent,
+          thresholdTokens: result.defaults.thresholdTokens
+        }
+      : undefined
+  return {
+    enabled: result.enabled,
+    thresholdPercent: result.thresholdPercent,
+    thresholdTokens: result.thresholdTokens,
+    ...(defaults ? { defaults } : {})
+  }
+}
+
 function applySessionState(session: RuntimeAgentSessionProxy, state: WorkerSessionState): void {
   session.sessionFile = state.sessionFile
   session.messages = Array.isArray(state.messages) ? state.messages : session.messages
   session.model = state.model
   session.thinkingLevel = state.thinkingLevel
-  if (state.cwd) {
-    session.sessionManager.cwd = state.cwd
-  }
+  if (state.cwd) session.sessionManager.cwd = state.cwd
 }
 
 function runtimePromptOptionsForWorker(
@@ -832,9 +863,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
 
   async getContextUsage(): Promise<ContextUsageSnapshot | null> {
     await this.ensureLive()
-    return this.engine.sessions.contextUsage({
-      sessionId: this.sessionId
-    })
+    return this.engine.sessions.contextUsage({ sessionId: this.sessionId })
   }
 
   hasActiveAgentRuns(): boolean {
@@ -859,46 +888,11 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     await this.ensureLive()
     control?.assertCurrent()
     const result = await this.engine.sessions.setAutoCompactionSettings(
-      {
-        sessionId: this.sessionId,
-        overrides
-      },
+      { sessionId: this.sessionId, overrides },
       control
     )
     control?.assertCurrent()
-    if (
-      result &&
-      typeof result === 'object' &&
-      'enabled' in result &&
-      typeof result.enabled === 'boolean' &&
-      'thresholdPercent' in result &&
-      typeof result.thresholdPercent === 'number' &&
-      'thresholdTokens' in result &&
-      typeof result.thresholdTokens === 'number'
-    )
-      return {
-        enabled: result.enabled,
-        thresholdPercent: result.thresholdPercent,
-        thresholdTokens: result.thresholdTokens,
-        ...('defaults' in result &&
-        result.defaults &&
-        typeof result.defaults === 'object' &&
-        'enabled' in result.defaults &&
-        typeof result.defaults.enabled === 'boolean' &&
-        'thresholdPercent' in result.defaults &&
-        typeof result.defaults.thresholdPercent === 'number' &&
-        'thresholdTokens' in result.defaults &&
-        typeof result.defaults.thresholdTokens === 'number'
-          ? {
-              defaults: {
-                enabled: result.defaults.enabled,
-                thresholdPercent: result.defaults.thresholdPercent,
-                thresholdTokens: result.defaults.thresholdTokens
-              }
-            }
-          : {})
-      }
-    return undefined
+    return toAutoCompactionReceipt(result)
   }
   async getAutoCompactionSettings(
     control?: RuntimeSelectionControl
@@ -922,26 +916,20 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
       !ownsRemoteRuntimeSession(this.sessionId)
     )
       return
-    const state = await this.engine.sessions.abort({
-      sessionId: this.sessionId
-    })
+    const state = await this.engine.sessions.abort({ sessionId: this.sessionId })
     applySessionState(this, state)
   }
   async dispose(): Promise<void> {
     agentRunCompletions.abandonSession(this.runtimeSessionId, 'Runtime session disposed')
     this.approvalAbortController.abort()
-    for (const cleanup of this.cleanupFns.splice(0)) {
-      cleanup()
-    }
+    for (const cleanup of this.cleanupFns.splice(0)) cleanup()
     if (
       this.recreate &&
       !this.engine.sessions.has(this.sessionId) &&
       !ownsRemoteRuntimeSession(this.sessionId)
     )
       return
-    await this.engine.sessions.dispose({
-      sessionId: this.sessionId
-    })
+    await this.engine.sessions.dispose({ sessionId: this.sessionId })
   }
 
   async setModel(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<void> {

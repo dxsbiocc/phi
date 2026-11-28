@@ -1,4 +1,3 @@
-
 import { PhiIcons } from '../../../icons'
 import { SidePanelIconTile } from '../../../components/SidePanelIconTile'
 import type { PackageManagerType } from '../../../../../shared/packageManagerTypes'

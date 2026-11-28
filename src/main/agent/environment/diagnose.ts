@@ -1,7 +1,4 @@
-import {
-  describeEnvironment,
-  type EnvironmentDescriptor
-} from '../content/environment-refs'
+import { describeEnvironment, type EnvironmentDescriptor } from '../content/environment-refs'
 import {
   findPlatform,
   getRuntimeRoot,
@@ -227,7 +224,8 @@ export function buildNextflowWindowsProfileGuidance(input: {
         id: 'use-conda-profile',
         title: '在本地 WSL2 下切换为 conda profile',
         recommended: remoteHosts.length === 0,
-        summary: '本地 WSL2 托管 Nextflow 支持通过 conda profile 自动准备模块依赖，无需本机容器运行时。',
+        summary:
+          '本地 WSL2 托管 Nextflow 支持通过 conda profile 自动准备模块依赖，无需本机容器运行时。',
         steps: [
           '重新运行该 Wrapper 时将执行 profile 改为 `conda`。',
           '若尚未构建 `phi:nextflow@1`，在「设置 → 环境」中构建后即可运行。'
@@ -267,8 +265,7 @@ export function diagnoseEnvironmentIssue(
   }
 
   const needsWsl =
-    input.descriptor?.runtime === 'wsl2' ||
-    (isWindows && input.ref === 'phi:nextflow@1')
+    input.descriptor?.runtime === 'wsl2' || (isWindows && input.ref === 'phi:nextflow@1')
   if (isWindows && needsWsl) {
     const probe = input.wslProbe ?? probeWsl({ platform: hostPlatform })
     const wslGuidance = buildWslRemediationGuidance({
@@ -334,7 +331,13 @@ export async function diagnoseLocalEnvironment(
   }))
 
   let managedEntries: ManagedEnvironmentEntry[] = []
-  if (topic === 'all' || topic === 'managed' || topic === 'nextflow' || topic === 'wsl' || options.ref) {
+  if (
+    topic === 'all' ||
+    topic === 'managed' ||
+    topic === 'nextflow' ||
+    topic === 'wsl' ||
+    options.ref
+  ) {
     try {
       managedEntries = await (options.listManaged ?? listManagedEnvironments)({
         root,
@@ -402,7 +405,9 @@ export async function diagnoseLocalEnvironment(
         code: 'env_unavailable',
         ref: options.ref,
         summary: `受管理环境 ${options.ref} 当前平台不可用（原因：${matched.unavailableReason ?? 'missing-lock'}）。`,
-        detail: descriptorError ?? `Environment ${options.ref} is unavailable on ${phiPlatform ?? hostPlatform}.`,
+        detail:
+          descriptorError ??
+          `Environment ${options.ref} is unavailable on ${phiPlatform ?? hostPlatform}.`,
         options: [remoteOption(remoteHosts, options.ref)]
       }
     } else if (matched && matched.state !== 'ready') {

@@ -371,7 +371,10 @@ export function officialWrapperGroupChoices(
   cachedTools?: readonly PhiWrapperCatalogTool[]
 ): OfficialWrapperGroupResolution {
   if (cachedTools) {
-    return { choices: officialWrapperToolChoices(cachedTools, registryChoices), authoritative: true }
+    return {
+      choices: officialWrapperToolChoices(cachedTools, registryChoices),
+      authoritative: true
+    }
   }
   const target = groupSuiteTarget(group.suite)
   if (registryChoices.length === 0 || group.count <= 0 || !target.slug) {

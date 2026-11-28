@@ -200,7 +200,9 @@ test('official phi-python ships a native win32-x64 lock', () => {
   assert.match(text, /# platform: win32-x64 \(win-64\)/)
   assert.ok(parsed.entries.length > 0)
   assert.equal(
-    parsed.entries.some((entry) => /\/(coreutils|pysam|bbknn|harmonypy|scanpy|scvelo|rdkit)-/.test(entry.url)),
+    parsed.entries.some((entry) =>
+      /\/(coreutils|pysam|bbknn|harmonypy|scanpy|scvelo|rdkit)-/.test(entry.url)
+    ),
     false
   )
 })

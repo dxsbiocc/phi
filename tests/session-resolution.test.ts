@@ -460,6 +460,9 @@ test('rejectsRoutedChange lets kernel sessions on either host change model and t
   assert.equal(rejectsRoutedChange('kernel-1', localKernel, owns), false)
   assert.equal(rejectsRoutedChange('kernel-1', newRemote, owns), false)
   assert.equal(rejectsRoutedChange('rpc-1', oldRpc, owns), true)
-  assert.equal(rejectsRoutedChange('in-process', remoteKernel, () => false), false)
+  assert.equal(
+    rejectsRoutedChange('in-process', remoteKernel, () => false),
+    false
+  )
   assert.equal(rejectsRoutedChange(undefined, oldRpc, owns), false)
 })

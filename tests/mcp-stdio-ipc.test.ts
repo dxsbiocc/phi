@@ -96,7 +96,19 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
   const compiled = ts.transpileModule(program, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText
-  return new Function('dependencies', compiled)({ IPC, ...dependencies }) as Map<string, IpcHandler>
+  const fakeRequire = (specifier: string): unknown => {
+    if (specifier === '../agent/envs/gc') {
+      return {
+        collectGarbage: () => ({ removed: [], orphans: [], skipped: [], logsRemoved: 0 }),
+        collectGarbageAsync: async () => ({ removed: [], orphans: [], skipped: [], logsRemoved: 0 })
+      }
+    }
+    throw new Error(`Unexpected module ${specifier}`)
+  }
+  return new Function('dependencies', 'require', compiled)(
+    { IPC, ...dependencies },
+    fakeRequire
+  ) as Map<string, IpcHandler>
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -250,9 +262,18 @@ function harness(installed = true): {
       state.installed = true
       return id === 'local' ? installResult : [{ id, version }]
     },
-    uninstallCatalogConnector: (id: string, options: unknown) => {
+    uninstallCatalogConnector: (
+      id: string,
+      options: {
+        agentDir: string
+        runtimeRoot: string
+        garbageCollect?: (runtimeRoot: string) => Promise<unknown>
+      }
+    ) => {
       assert.equal(id, 'local')
-      assert.deepEqual(options, { agentDir: AGENT_DIR, runtimeRoot: RUNTIME_ROOT })
+      assert.equal(options.agentDir, AGENT_DIR)
+      assert.equal(options.runtimeRoot, RUNTIME_ROOT)
+      assert.equal(typeof options.garbageCollect, 'function')
       calls.push('package:uninstall')
       state.installed = false
       return []
