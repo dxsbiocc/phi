@@ -166,7 +166,7 @@ Phi connects to the model providers and MCP services you enable. Background job 
 
 ## Availability
 
-Phi **0.2.1** is in **public beta**, with installers for **macOS (Apple Silicon)**, **Linux x64**, and **Windows x64** on the [Releases](https://github.com/dxsbiocc/phi/releases) page. Check for updates under **Settings -> General -> Check for updates** or from the **Messages** panel to review release notes, download SHA-256 verified installers with live progress, and replace your installation in place (preserving all data in `~/.phi`).
+Phi **0.2.2** is in **public beta**, with installers for **macOS (Apple Silicon)**, **Linux x64**, and **Windows x64** on the [Releases](https://github.com/dxsbiocc/phi/releases) page. Check for updates under **Settings -> General -> Check for updates** or from the **Messages** panel to review release notes, download SHA-256 verified installers with live progress, and replace your installation in place (preserving all data in `~/.phi`).
 
 - **macOS Apple Silicon** (`.dmg`, `.zip`): drag Phi to Applications. Public beta builds use ad-hoc signing without Apple Developer ID notarization; on first launch, open **System Settings -> Privacy & Security** and click **Open Anyway** once per version.
 - **Linux x64** (`.AppImage`, `.deb`): install with `sudo apt install ./phi_*.deb`, or run `chmod +x Phi-*.AppImage` and launch the AppImage. Bundled `bun`, `micromamba`, and `phi-kernel` binaries are included.
