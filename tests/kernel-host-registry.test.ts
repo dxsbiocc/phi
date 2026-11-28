@@ -72,6 +72,7 @@ const EXPECTED_USER_CAPABILITIES = new Set([
   'skills.run',
   'skills.scriptTool',
   'capabilities.install',
+  'capabilities.findSkills',
   'wrapperJob.start'
 ])
 

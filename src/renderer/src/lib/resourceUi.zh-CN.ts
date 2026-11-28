@@ -70,6 +70,7 @@ export const resourceCatalogZh = {
   restartBackend: 'Phi 后台仍在运行旧版本，请完整退出并重新启动 Phi 后加载官方软件源。',
   permissionApproval: '安装批准',
   capabilityInstall: '安装功能模块',
+  externalSkillSearch: '搜索外部技能（第三方未验证）',
   openSession: '打开对话',
   reject: '拒绝',
   approve: '批准',

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { EnvironmentNotReadyError } from '../content/environment-refs'
 import { getRuntimeRoot } from '../envs'
 import type { PhiPlatform } from '../envs/contract'
+import { API_KEY_CONNECTOR_IDS, apiKeyConnector } from '../mcp-key-credentials'
 import type { McpPackageManifest } from '../packages/manifest'
 import { getPhiAgentDir } from '../runtime-paths'
 import {
@@ -134,6 +135,13 @@ export function removeMcpPackageConfig(packageId: string, agentDir = getPhiAgent
   return true
 }
 
+function isManagedApiKeyHttpEntry(packageId: string, entry: Record<string, unknown>): boolean {
+  if (!API_KEY_CONNECTOR_IDS.includes(packageId as (typeof API_KEY_CONNECTOR_IDS)[number])) {
+    return false
+  }
+  return entry.type === 'http' && entry.url === apiKeyConnector(packageId).url
+}
+
 /** Toggles only package-owned entries. Pending entries remember the requested final state. */
 export function setMcpPackageConfigEnabled(
   packageId: string,
@@ -146,9 +154,11 @@ export function setMcpPackageConfigEnabled(
   const next = Object.fromEntries(
     Object.entries(servers).map(([name, entry]) => {
       if (packageIdFromMcpEntry(entry) !== packageId || !isRecord(entry)) return [name, entry]
+      // API-key HTTP entries stay disabled on disk so OMP never connects without the key header.
+      const storedEnabled = isManagedApiKeyHttpEntry(packageId, entry) ? false : enabled
       const marker = readManagedMarker(entry)
       const nextMarker = marker ? { ...marker, desiredEnabled: enabled } : undefined
-      if (entry.enabled === enabled && (!marker || marker.desiredEnabled === enabled)) {
+      if (entry.enabled === storedEnabled && (!marker || marker.desiredEnabled === enabled)) {
         return [name, entry]
       }
       changed = true
@@ -156,7 +166,7 @@ export function setMcpPackageConfigEnabled(
         name,
         {
           ...entry,
-          enabled,
+          enabled: storedEnabled,
           ...(nextMarker ? { phiManaged: nextMarker } : {})
         }
       ]

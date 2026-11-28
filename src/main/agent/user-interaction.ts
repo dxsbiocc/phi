@@ -23,6 +23,7 @@ export type AgentUserInteractionInput = {
   questions: AgentUserInteractionQuestion[]
   planReview?: AgentUserInteractionRequest['planReview']
   missingTool?: AgentUserInteractionRequest['missingTool']
+  mcpAuth?: AgentUserInteractionRequest['mcpAuth']
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number
@@ -114,6 +115,7 @@ export function waitForAgentUserInteraction(
       questions: input.questions,
       ...(input.planReview ? { planReview: input.planReview } : {}),
       ...(input.missingTool ? { missingTool: input.missingTool } : {}),
+      ...(input.mcpAuth ? { mcpAuth: input.mcpAuth } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
       ...(typeof input.sessionGeneration === 'number'

@@ -148,9 +148,23 @@ export async function refreshInstalledCapabilities(
       : Array.isArray(result.packages)
         ? result.packages
         : []
+    const unauthenticated = new Set(
+      Array.isArray(result.authentication)
+        ? result.authentication.flatMap((entry) =>
+            isRecord(entry) && typeof entry.id === 'string' && entry.status !== 'authenticated'
+              ? [entry.id]
+              : []
+          )
+        : []
+    )
     const connectors = new Set(
       [...packages, result.root].flatMap((entry) =>
-        isRecord(entry) && entry.type === 'mcp' && typeof entry.id === 'string' ? [entry.id] : []
+        isRecord(entry) &&
+        entry.type === 'mcp' &&
+        typeof entry.id === 'string' &&
+        !unauthenticated.has(entry.id)
+          ? [entry.id]
+          : []
       )
     )
     for (const name of connectors) {

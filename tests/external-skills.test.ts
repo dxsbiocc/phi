@@ -10,7 +10,8 @@ import { createDeterministicTarGz } from '../src/main/agent/packages/archive'
 import {
   createExternalSkillService,
   type ExternalSkillApprovalRequest,
-  type ExternalSkillDependencies
+  type ExternalSkillDependencies,
+  type ExternalSkillSearchApprovalRequest
 } from '../src/main/agent/packages/external-skills'
 import { listInstalledPackages } from '../src/main/agent/packages/installed'
 import { runPackageMutation } from '../src/main/agent/packages/mutation-queue'
@@ -415,4 +416,82 @@ test('invalid SKILL.md fails the normal package validation and leaves no install
   await assert.rejects(service.install(request(await candidate(service)), {}), /软件包类型验证失败/)
   assert.deepEqual(listInstalledPackages({ agentDir }), [])
   assert.deepEqual(readdirSync(join(agentDir, '.staging')), [])
+})
+
+test('find_skills prompts for search approval with query and security warning before any external HTTP call, and install prompts a second time', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-external-skills-two-stage-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const agentDir = join(root, 'agent')
+  const calls: string[] = []
+  const searchApprovals: ExternalSkillSearchApprovalRequest[] = []
+  const installApprovals: ExternalSkillApprovalRequest[] = []
+  let allowSearch = false
+
+  const service = createExternalSkillService({
+    agentDir,
+    appVersion: '0.1.0',
+    fetch: async (input) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.startsWith('https://skills.sh/api/search?')) {
+        return Response.json({
+          skills: [{ source: REPO, skillId: SKILL, id: `${REPO}/${SKILL}`, name: SKILL }],
+          count: 1
+        })
+      }
+      if (url.endsWith('.git/info/refs?service=git-upload-pack')) {
+        return new Response('', { status: 503 })
+      }
+      if (url === `https://api.github.com/repos/${REPO}/commits/HEAD`) {
+        return Response.json({ sha: SHA })
+      }
+      if (url === `https://codeload.github.com/${REPO}/tar.gz/${SHA}`) {
+        return new Response(new Uint8Array(snapshot({ 'skills/scanpy/SKILL.md': skillText() })))
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    confirmSearch: async (req) => {
+      assert.equal(calls.length, 0, 'search approval must happen before any request to skills.sh')
+      searchApprovals.push(req)
+      return allowSearch
+    },
+    confirm: async (req) => {
+      installApprovals.push(req)
+      return true
+    }
+  })
+
+  // 1. Denied search makes zero network requests
+  const deniedSearch = await service.findSkills(
+    { runtimeSessionId: SESSION, query: 'sensitive-target-pathway' },
+    {}
+  )
+  assert.equal(calls.length, 0)
+  assert.equal(searchApprovals.length, 1)
+  assert.match(searchApprovals[0]!.question, /skills\.sh/)
+  assert.match(searchApprovals[0]!.question, /搜索关键词：sensitive-target-pathway/)
+  assert.match(searchApprovals[0]!.question, /未经 Phi 官方签名或安全审核/)
+  assert.equal('ok' in deniedSearch && deniedSearch.ok, false)
+  if ('status' in deniedSearch) assert.equal(deniedSearch.status, 'denied')
+
+  // 2. Approved search queries skills.sh, and subsequent install shows second-stage security warning
+  allowSearch = true
+  const approvedSearch = await service.findSkills(
+    { runtimeSessionId: SESSION, query: 'scanpy' },
+    {}
+  )
+  assert.equal(calls.length, 1)
+  assert.equal(approvedSearch.candidates.length, 1)
+
+  const installResult = await service.install(
+    request(approvedSearch.candidates[0]!.candidateId),
+    {}
+  )
+  assert.equal(installResult.ok, true)
+  assert.equal(installApprovals.length, 1)
+  assert.match(installApprovals[0]!.question, /https:\/\/github\.com\/example\/scientific-skills/)
+  assert.match(installApprovals[0]!.question, new RegExp(SHA))
+  assert.match(installApprovals[0]!.question, /二次安全提醒/)
+  assert.match(installApprovals[0]!.question, /提示词注入风险/)
+  assert.match(installApprovals[0]!.question, /可执行脚本/)
 })

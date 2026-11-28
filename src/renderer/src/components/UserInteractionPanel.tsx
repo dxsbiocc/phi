@@ -16,6 +16,7 @@ import {
 import { useMemo, useState } from 'react'
 import { PhiIcons } from '../icons'
 import { PlanReviewPanel } from '../features/plan/components/PlanReviewPanel'
+import { McpAuthPromptCard } from '../features/chat/components/McpAuthPromptCard'
 import { MissingToolPromptCard } from '../features/chat/components/MissingToolPromptCard'
 import { LabeledIconButton } from './LabeledIconButton'
 import type {
@@ -132,6 +133,15 @@ function UserInteractionPanel({
     return (
       <MissingToolPromptCard
         request={{ requestId: request.requestId, ...missingTool }}
+        onRespond={onRespond}
+      />
+    )
+  }
+  const mcpAuth = request?.mcpAuth
+  if (request && mcpAuth) {
+    return (
+      <McpAuthPromptCard
+        request={{ requestId: request.requestId, ...mcpAuth }}
         onRespond={onRespond}
       />
     )

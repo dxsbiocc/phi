@@ -5,6 +5,7 @@ import semver from 'semver'
 
 import { isEnabled, setEnabled } from '../enablement'
 import type { PhiHostRequestContext } from '../engine/types'
+import { isMcpConnectorUserDisabled, setMcpConnectorEnabled } from '../mcp-connectors'
 import { setMcpPackageConfigEnabled } from '../mcp/package-config'
 import { setPluginEnabled } from '../plugins/loader'
 import { resetWrapperCompositionCatalogCache } from '../wrappers/composition/discovery'
@@ -38,6 +39,8 @@ import { errorMessage } from '../../../shared/errorCodes'
 export type {
   CapabilityApprovalPackage,
   CapabilityApprovalRequest,
+  CapabilityAuthKind,
+  CapabilityAuthReceipt,
   CapabilityCandidate,
   CapabilityInstallResult,
   CapabilityPrepare,
@@ -133,9 +136,18 @@ export function createCapabilityService(deps: CapabilityServiceDependencies): Ca
     assertCurrent(context)
     const installed = listInstalled()
     const selected = selectEntries(loaded.registries, input, official.matches)
-    const candidates = selected.map(({ registry, entry }) =>
-      remember(input.runtimeSessionId, registry, entry, installed)
+    const candidates = await Promise.all(
+      selected.map(async ({ registry, entry }) => {
+        const candidate = remember(input.runtimeSessionId, registry, entry, installed)
+        if (entry.type !== 'mcp' || !deps.inspectMcpAuth) return candidate
+        const current = installed.find((item) => item.type === entry.type && item.id === entry.id)
+        const auth = await deps
+          .inspectMcpAuth({ registry, entry, installed: current }, context.signal)
+          .catch(() => undefined)
+        return auth ? { ...candidate, ...auth } : candidate
+      })
     )
+    assertCurrent(context)
     const errors = [...loaded.errors, ...(loaded.stateError ? [loaded.stateError] : [])]
     return {
       candidates,
@@ -192,28 +204,39 @@ export function createCapabilityService(deps: CapabilityServiceDependencies): Ca
       (item) =>
         item.type === request.type && item.id === request.id && item.version === request.version
     )
-    const approval: CapabilityApprovalRequest = {
-      runtimeSessionId: input.runtimeSessionId,
-      candidateId: input.candidateId,
-      root: plan.root,
-      action: plan.packages.length === 0 ? 'enable' : 'install',
-      reason: input.reason,
-      source: existingRoot?.registry ?? sourceLabel(candidate.registry),
-      trust: existingRoot?.trust ?? candidate.registry.trust,
-      packages: approvalPackages(plan, candidate.entry, before),
-      totalSize: plan.totalSize,
-      environments: plan.environments
-    }
-    assertCurrent(context)
-    const approved = await approvalDecision(deps.confirm(approval, context), context.signal)
-    if (context.signal?.aborted) return cancelled()
-    assertCurrent(context)
-    if (approved !== true) {
-      return {
-        ok: false,
-        installed: false,
-        status: 'denied',
-        message: '用户拒绝安装；请继续使用现有功能'
+    if (
+      !(await isAuthOnlyMcpInstall(
+        plan,
+        existingRoot,
+        candidate.registry,
+        candidate.entry,
+        deps,
+        context.signal
+      ))
+    ) {
+      const approval: CapabilityApprovalRequest = {
+        runtimeSessionId: input.runtimeSessionId,
+        candidateId: input.candidateId,
+        root: plan.root,
+        action: plan.packages.length === 0 ? 'enable' : 'install',
+        reason: input.reason,
+        source: existingRoot?.registry ?? sourceLabel(candidate.registry),
+        trust: existingRoot?.trust ?? candidate.registry.trust,
+        packages: approvalPackages(plan, candidate.entry, before),
+        totalSize: plan.totalSize,
+        environments: plan.environments
+      }
+      assertCurrent(context)
+      const approved = await approvalDecision(deps.confirm(approval, context), context.signal)
+      if (context.signal?.aborted) return cancelled()
+      assertCurrent(context)
+      if (approved !== true) {
+        return {
+          ok: false,
+          installed: false,
+          status: 'denied',
+          message: '用户拒绝安装；请继续使用现有功能'
+        }
       }
     }
     return runPackageMutation(async () => {
@@ -467,6 +490,7 @@ function sourceLabel(registry: LocalRegistry): string {
 }
 
 function packageEnabled(item: InstalledPackage, agentDir: string): boolean {
+  if (item.type === 'mcp' && isMcpConnectorUserDisabled(item.id, agentDir)) return false
   return (
     item.enabled !== false &&
     isEnabled(
@@ -485,7 +509,10 @@ function enablePackage(item: InstalledPackage, options: InstallerOptions): void 
       agentDir: options.agentDir,
       logger: silentLogger
     })
-    if (item.type === 'mcp') setMcpPackageConfigEnabled(item.id, true, options.agentDir)
+    if (item.type === 'mcp') {
+      setMcpConnectorEnabled(item.id, true, undefined, options.agentDir)
+      setMcpPackageConfigEnabled(item.id, true, options.agentDir)
+    }
   }
 }
 
@@ -590,6 +617,28 @@ function approvalDecision(decision: Promise<boolean>, signal?: AbortSignal): Pro
     signal.addEventListener('abort', onAbort, { once: true })
     void decision.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
   })
+}
+
+async function isAuthOnlyMcpInstall(
+  plan: InstallPlan,
+  existingRoot: InstalledPackage | undefined,
+  registry: LocalRegistry,
+  entry: RegistryPackageEntry,
+  deps: CapabilityServiceDependencies,
+  signal?: AbortSignal
+): Promise<boolean> {
+  if (
+    plan.packages.length > 0 ||
+    existingRoot?.type !== 'mcp' ||
+    !packageEnabled(existingRoot, deps.agentDir) ||
+    !deps.inspectMcpAuth
+  ) {
+    return false
+  }
+  const info = await deps
+    .inspectMcpAuth({ registry, entry, installed: existingRoot }, signal)
+    .catch(() => undefined)
+  return Boolean(info?.authRequired && info.authenticated === false)
 }
 
 function cancelled(): Extract<CapabilityInstallResult, { ok: false }> {

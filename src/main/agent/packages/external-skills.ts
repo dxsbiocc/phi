@@ -37,6 +37,14 @@ const CANDIDATE_LIFETIME_MS = 30 * 60_000
 const SKILL_NAME = /^[a-z][a-z0-9-]{1,63}$/
 const silentLogger = { info: (): void => undefined, warn: (): void => undefined }
 
+export interface ExternalSkillSearchApprovalRequest {
+  runtimeSessionId: string
+  query: string
+  limit: number
+  endpoint: 'https://skills.sh/api/search'
+  question: string
+}
+
 export interface ExternalSkillApprovalRequest {
   runtimeSessionId: string
   candidateId: string
@@ -51,6 +59,10 @@ export interface ExternalSkillDependencies {
   agentDir: string
   appVersion: string
   fetch?: typeof globalThis.fetch
+  confirmSearch?: (
+    request: ExternalSkillSearchApprovalRequest,
+    context: PhiHostRequestContext
+  ) => Promise<boolean>
   confirm: (
     request: ExternalSkillApprovalRequest,
     context: PhiHostRequestContext
@@ -65,13 +77,57 @@ interface RememberedSkill {
   createdAt: number
 }
 
+export type ExternalSkillSearchResult =
+  | {
+      candidates: CapabilityCandidate[]
+      errors: string[]
+    }
+  | {
+      ok: false
+      searched: false
+      status: 'denied' | 'cancelled'
+      candidates: CapabilityCandidate[]
+      errors: string[]
+      message: string
+    }
+
 export interface ExternalSkillService {
   findSkills: (
     params: unknown,
     context: PhiHostRequestContext
-  ) => Promise<{ candidates: CapabilityCandidate[]; errors: string[] }>
+  ) => Promise<ExternalSkillSearchResult>
   install: (params: unknown, context: PhiHostRequestContext) => Promise<CapabilityInstallResult>
   ownsCandidate: (candidateId: string, runtimeSessionId: string) => boolean
+}
+
+export function externalSkillSearchSummary(query: string): string {
+  return [
+    '允许向外部网站 skills.sh 搜索第三方社区技能吗？',
+    `搜索关键词：${query}`,
+    '目标站点：https://skills.sh/api/search（第三方公共网站）',
+    '安全提醒：',
+    '• Phi 官方软件源中未找到匹配技能；批准后会将上述搜索词发送至外部网站检索元数据。',
+    '• 外部社区技能未经 Phi 官方签名或安全审核，可能包含不受信任的指令或脚本。',
+    '• 本次批准仅允许检索列表，不会下载或运行任何代码；后续若需安装仍将再次请求确认。'
+  ].join('\n')
+}
+
+export function externalSkillInstallSummary(params: {
+  repo: string
+  sha: string
+  skill: string
+  reason: string
+}): string {
+  return [
+    `允许从 GitHub ${params.repo} 安装外部技能 ${params.skill} 吗？`,
+    `仓库地址：https://github.com/${params.repo}`,
+    `提交：${params.sha}`,
+    '来源与信任：第三方社区导入（imported · 未签名 · 未经 Phi 官方审核）',
+    `用途：${params.reason}`,
+    '二次安全提醒：',
+    '• 该外部技能未经 Phi 官方安全审查，安装后其 SKILL.md 指令将加载到当前对话上下文（存在提示词注入风险）。',
+    '• 技能包内可能附带可执行脚本，运行时可能读取项目文件或引导工具操作；请核对仓库来源与提交哈希，仅在信任作者时批准安装。'
+  ].join('\n')
 }
 
 /** Search results are untrusted data; only host-created, session-bound tokens can be installed. */
@@ -103,12 +159,37 @@ export function createExternalSkillService(deps: ExternalSkillDependencies): Ext
   async function findSkills(
     params: unknown,
     context: PhiHostRequestContext
-  ): Promise<{
-    candidates: CapabilityCandidate[]
-    errors: string[]
-  }> {
+  ): Promise<ExternalSkillSearchResult> {
     const input = searchInput(params)
+    if (context.signal?.aborted) return searchCancelled()
     check(context)
+    if (deps.confirmSearch) {
+      const approved = await approvalDecision(
+        deps.confirmSearch(
+          {
+            runtimeSessionId: input.runtimeSessionId,
+            query: input.query,
+            limit: input.limit,
+            endpoint: 'https://skills.sh/api/search',
+            question: externalSkillSearchSummary(input.query)
+          },
+          context
+        ),
+        context.signal
+      )
+      if (context.signal?.aborted) return searchCancelled()
+      check(context)
+      if (approved !== true) {
+        return {
+          ok: false,
+          searched: false,
+          status: 'denied',
+          candidates: [],
+          errors: [],
+          message: '用户拒绝向外部网站搜索第三方技能；请继续使用现有功能和官方模块'
+        }
+      }
+    }
     const url = new URL('https://skills.sh/api/search')
     url.searchParams.set('q', input.query)
     url.searchParams.set('limit', String(input.limit))
@@ -190,7 +271,12 @@ export function createExternalSkillService(deps: ExternalSkillDependencies): Ext
             sha,
             skill: candidate.skill,
             reason: input.reason,
-            question: `允许从 GitHub ${candidate.repo} 安装外部技能 ${candidate.skill} 吗？提交：${sha}。该技能未经 Phi 官方审核。用途：${input.reason}`
+            question: externalSkillInstallSummary({
+              repo: candidate.repo,
+              sha,
+              skill: candidate.skill,
+              reason: input.reason
+            })
           },
           context
         ),
@@ -435,6 +521,17 @@ function approvalDecision(decision: Promise<boolean>, signal?: AbortSignal): Pro
       .finally(() => signal.removeEventListener('abort', onAbort))
       .catch(() => undefined)
   })
+}
+
+function searchCancelled(): ExternalSkillSearchResult {
+  return {
+    ok: false,
+    searched: false,
+    status: 'cancelled',
+    candidates: [],
+    errors: [],
+    message: '外部技能搜索已取消'
+  }
 }
 
 function cancelled(): CapabilityInstallResult {

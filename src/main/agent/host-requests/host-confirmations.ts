@@ -200,6 +200,24 @@ async function confirmAgentModuleInstallation(
   return approved
 }
 
+async function confirmExternalSkillSearch(
+  runtimeSessionId: string,
+  summary: string,
+  context: PhiHostRequestContext,
+  deps: HostConfirmationDeps
+): Promise<boolean> {
+  deps.capability.assertCurrent(context)
+  const approved = await confirmHostToolApproval(
+    runtimeSessionId,
+    'find_skills',
+    summary,
+    context,
+    deps
+  )
+  deps.capability.assertCurrent(context)
+  return approved
+}
+
 async function approveRemoteJupyterStart(
   identity: { runtimeSessionId: string; sessionId: string },
   info: { serverLabel: string; projectName: string },
@@ -227,6 +245,11 @@ export function createHostConfirmations(deps: HostConfirmationDeps): {
     summary: string,
     context: PhiHostRequestContext
   ): Promise<boolean>
+  confirmExternalSkillSearch(
+    runtimeSessionId: string,
+    summary: string,
+    context: PhiHostRequestContext
+  ): Promise<boolean>
   approveRemoteJupyterStart(
     identity: { runtimeSessionId: string; sessionId: string },
     info: { serverLabel: string; projectName: string },
@@ -244,6 +267,8 @@ export function createHostConfirmations(deps: HostConfirmationDeps): {
     confirmEnvironmentRequest: (request) => confirmEnvironmentRequest(request, deps),
     confirmAgentModuleInstallation: (runtimeSessionId, summary, context) =>
       confirmAgentModuleInstallation(runtimeSessionId, summary, context, deps),
+    confirmExternalSkillSearch: (runtimeSessionId, summary, context) =>
+      confirmExternalSkillSearch(runtimeSessionId, summary, context, deps),
     approveRemoteJupyterStart: (identity, info, context) =>
       approveRemoteJupyterStart(identity, info, context, deps),
     confirmHostToolApproval: (runtimeSessionId, toolName, summary, context) =>

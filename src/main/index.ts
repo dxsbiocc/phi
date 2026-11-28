@@ -218,11 +218,7 @@ import { createSkillHost } from './agent/content/skill-host'
 import { loadRemoteProjectSkillCatalog } from './agent/content/remote-project-skill-service'
 import { loadRemoteProjectMcpCatalog } from './agent/mcp/remote-project-mcp-service'
 import { getRuntimeRoot } from './agent/envs/runtime'
-import { capabilityApprovalSummary } from './agent/packages/capability-approval'
-import { createCapabilityHost } from './agent/packages/capability-host'
-import { createCapabilityService } from './agent/packages/capability-service'
-import { createExternalSkillService } from './agent/packages/external-skills'
-import { searchOfficialCatalog } from './agent/packages/official-catalog-api'
+import { createAppCapabilityWiring } from './agent/packages/app-capability-wiring'
 import {
   confirmedEnvironmentBuild,
   environmentBuildQuestion
@@ -238,6 +234,7 @@ import {
   waitForAgentUserInteraction
 } from './agent/user-interaction'
 import { createAgentInteractionRequest } from './agent/host-requests/agent-interaction-request'
+import { createMcpAuthPrompt } from './agent/host-requests/mcp-auth-prompt'
 import { createMissingToolPrompt } from './agent/host-requests/missing-tool-prompt'
 import { createMissingToolRuntime } from './agent/missing-tool-runtime'
 import { createDeliverablesPresentation } from './agent/host-requests/deliverables-presentation'
@@ -266,7 +263,6 @@ import {
   createContentPackageRuntime,
   packageUpdateViews
 } from './agent/packages/content-package-runtime'
-import { prepareContentPackageInstall } from './agent/packages/content-source'
 import {
   listConnectorCatalog,
   mcpOAuthAuthorizationOrigin,
@@ -904,6 +900,7 @@ const handleAgentInteractionRequest = createAgentInteractionRequest({
   }
 })
 const promptForMissingTool = createMissingToolPrompt({ request: handleAgentInteractionRequest })
+const promptForMcpAuth = createMcpAuthPrompt({ request: handleAgentInteractionRequest })
 
 const { handlePresentFilesRequest, presentScriptArtifacts } = createDeliverablesPresentation({
   agentDir: AGENT_DIR,
@@ -933,6 +930,7 @@ const {
   confirmEnvironmentBuild,
   confirmEnvironmentRequest,
   confirmAgentModuleInstallation,
+  confirmExternalSkillSearch,
   approveRemoteJupyterStart,
   confirmHostToolApproval
 } = createHostConfirmations({
@@ -1451,49 +1449,21 @@ getPhiEngine().host.register('environments.cancel', (params, context) =>
     ? remoteRuntimeController.environments.cancel(params)
     : undefined
 )
-const capabilityService = createCapabilityService({
+const { capabilityHost } = createAppCapabilityWiring({
   agentDir: AGENT_DIR,
   appVersion: app.getVersion(),
-  loadRegistries: loadPackageRegistries,
-  searchOfficial: (query, type, signal) =>
-    searchOfficialCatalog(query, type, signal, { fetch: officialRegistryFetch }),
-  confirm: (request, context) =>
-    confirmAgentModuleInstallation(
-      request.runtimeSessionId,
-      capabilityApprovalSummary(request),
-      context
-    ),
-  prepare: (registry, request, _options, signal) =>
-    prepareContentPackageInstall(registry, request, {
-      ...officialContentSourceOptions(),
-      fetch: (input, init) =>
-        officialRegistryFetch(input, {
-          ...init,
-          signal: signal
-            ? AbortSignal.any([signal, ...(init?.signal ? [init.signal] : [])])
-            : init?.signal
-        })
-    }),
-  installerOptions: async () => ({
-    ...officialContentSourceOptions(),
-    runtimeRoot: getRuntimeRoot(),
-    names: await installedPluginNamespace(),
-    build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-  }),
-  assertCurrent: (context) => capabilityHost.assertCurrent(context)
-})
-const externalSkillService = createExternalSkillService({
-  agentDir: AGENT_DIR,
-  appVersion: app.getVersion(),
-  fetch: officialRegistryFetch,
-  confirm: (request, context) =>
-    confirmAgentModuleInstallation(request.runtimeSessionId, request.question, context),
-  assertCurrent: (context) => capabilityHost.assertCurrent(context)
-})
-const capabilityHost: ReturnType<typeof createCapabilityHost> = createCapabilityHost({
-  service: capabilityService,
-  external: externalSkillService,
-  onInstalled: (_result, context) => {
+  getRuntimeRoot,
+  loadPackageRegistries,
+  officialRegistryFetch,
+  officialContentSourceOptions,
+  installedPluginNamespace,
+  environmentBuilds,
+  confirmAgentModuleInstallation,
+  confirmExternalSkillSearch,
+  promptForMcpAuth,
+  featuredAuthStatus: (id, url) => getPhiEngine().mcp.featuredAuthStatus({ id, url }),
+  cancelFeaturedAuth: (id) => getPhiEngine().mcp.cancelFeaturedAuth({ id }),
+  onResourcesChanged: (context) => {
     const run = context.originSessionId
       ? findActivePromptRunByRuntimeSessionId(context.originSessionId)
       : undefined

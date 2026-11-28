@@ -25,6 +25,9 @@ const TOOL_LABELS: Record<string, string> = {
   },
   get capability_install() {
     return resourceCatalogCopy.capabilityInstall
+  },
+  get find_skills() {
+    return resourceCatalogCopy.externalSkillSearch
   }
 }
 
@@ -38,7 +41,8 @@ function ToolApprovalDialog({ request, onRespond }: ToolApprovalDialogProps): Re
   if (!request) {
     return <></>
   }
-  const resourceApproval = request.toolName === 'capability_install'
+  const resourceApproval =
+    request.toolName === 'capability_install' || request.toolName === 'find_skills'
 
   return (
     <Paper

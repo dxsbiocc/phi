@@ -3,6 +3,7 @@ import type {
   AgentUserInteractionQuestion,
   AgentUserInteractionRequest,
   AgentUserInteractionResponse,
+  McpAuthPrompt,
   MissingToolCandidateSource,
   MissingToolId,
   MissingToolPrompt,
@@ -74,6 +75,67 @@ interface ParsedInteractionRequest {
   runtimeSessionId: string
   questions: AgentUserInteractionQuestion[]
   missingTool?: MissingToolPrompt
+  mcpAuth?: McpAuthPrompt
+}
+
+function safeHttpsUrlField<Window>(
+  record: Record<string, unknown>,
+  key: string,
+  deps: AgentInteractionRequestDeps<Window>
+): string | undefined {
+  const raw = deps.fields.optionalStringField(record, key)
+  if (!raw || raw.length > 2_048) return undefined
+  try {
+    const parsed = new URL(raw)
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) {
+      return undefined
+    }
+    return raw
+  } catch {
+    return undefined
+  }
+}
+
+function mcpAuthConnectorBase<Window>(
+  connector: Record<string, unknown>,
+  deps: AgentInteractionRequestDeps<Window>
+): { id: string; title: string; publisher: string; homepageUrl?: string } | undefined {
+  const id = deps.fields.optionalStringField(connector, 'id')
+  const title = deps.fields.optionalStringField(connector, 'title')
+  const publisher = deps.fields.optionalStringField(connector, 'publisher')
+  if (!id || !/^[a-z][a-z0-9-]{1,63}$/.test(id) || !title || !publisher) return undefined
+  const homepageUrl = safeHttpsUrlField(connector, 'homepageUrl', deps)
+  if (connector.homepageUrl !== undefined && !homepageUrl) return undefined
+  return { id, title, publisher, ...(homepageUrl ? { homepageUrl } : {}) }
+}
+
+function mcpAuthField<Window>(
+  value: unknown,
+  runtimeSessionId: string,
+  deps: AgentInteractionRequestDeps<Window>
+): McpAuthPrompt | undefined {
+  if (
+    !isRecord(value) ||
+    value.runtimeSessionId !== runtimeSessionId ||
+    !isRecord(value.connector)
+  ) {
+    return undefined
+  }
+  const base = mcpAuthConnectorBase(value.connector, deps)
+  if (!base) return undefined
+  if (value.kind === 'oauth') {
+    const authorizationOrigin = safeHttpsUrlField(value.connector, 'authorizationOrigin', deps)
+    return authorizationOrigin
+      ? { runtimeSessionId, kind: 'oauth', connector: { ...base, authorizationOrigin } }
+      : undefined
+  }
+  if (value.kind === 'api-key') {
+    const obtainUrl = safeHttpsUrlField(value.connector, 'obtainUrl', deps)
+    return obtainUrl
+      ? { runtimeSessionId, kind: 'api-key', connector: { ...base, obtainUrl } }
+      : undefined
+  }
+  return undefined
 }
 
 const missingToolIds = new Set<MissingToolId>([
@@ -234,7 +296,16 @@ function parseInteractionRequest<Window>(
   if (record.missingTool !== undefined && !missingTool) {
     throw new Error('Invalid missing tool interaction request')
   }
-  return { runtimeSessionId, questions, ...(missingTool ? { missingTool } : {}) }
+  const mcpAuth = mcpAuthField(record.mcpAuth, runtimeSessionId, deps)
+  if (record.mcpAuth !== undefined && !mcpAuth) {
+    throw new Error('Invalid MCP authentication interaction request')
+  }
+  return {
+    runtimeSessionId,
+    questions,
+    ...(missingTool ? { missingTool } : {}),
+    ...(mcpAuth ? { mcpAuth } : {})
+  }
 }
 
 function activeInteractionRun<Window>(
@@ -264,9 +335,10 @@ function interactionRequest(
     project: AgentInteractionProject | undefined
     sessionPath: string
     missingTool?: MissingToolPrompt
+    mcpAuth?: McpAuthPrompt
   }
 ): AgentUserInteractionRequest {
-  const { project, sessionPath, missingTool } = details
+  const { project, sessionPath, missingTool, mcpAuth } = details
   return {
     requestId: interactionId,
     questions,
@@ -276,7 +348,8 @@ function interactionRequest(
     runId: run.runId,
     cwd: project?.location.kind === 'ssh' ? project.location.remoteRoot : run.cwd,
     ...(project?.name ? { projectName: project.name } : {}),
-    ...(missingTool ? { missingTool } : {})
+    ...(missingTool ? { missingTool } : {}),
+    ...(mcpAuth ? { mcpAuth } : {})
   }
 }
 
@@ -314,7 +387,10 @@ export function createAgentInteractionRequest<Window = unknown>(
     params: unknown,
     context?: PhiHostRequestContext
   ): Promise<unknown> {
-    const { runtimeSessionId, questions, missingTool } = parseInteractionRequest(params, deps)
+    const { runtimeSessionId, questions, missingTool, mcpAuth } = parseInteractionRequest(
+      params,
+      deps
+    )
     const run = activeInteractionRun(runtimeSessionId, context, deps)
     const window = deps.renderer.getActiveWindow()
 
@@ -330,7 +406,8 @@ export function createAgentInteractionRequest<Window = unknown>(
       interactionRequest(interactionId, questions, run, {
         project,
         sessionPath: deps.state.sessionPath(run.phiSessionId),
-        missingTool
+        missingTool,
+        mcpAuth
       }),
       window as Window,
       [context?.signal]

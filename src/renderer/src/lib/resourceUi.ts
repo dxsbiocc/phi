@@ -87,6 +87,7 @@ export const resourceCatalogCopy = defineCopy(
       'Phi is running an older backend. Quit and restart Phi to load official sources.',
     permissionApproval: 'Installation approval',
     capabilityInstall: 'Install capability',
+    externalSkillSearch: 'Search external skills (unverified)',
     openSession: 'Open chat',
     reject: 'Deny',
     approve: 'Approve',

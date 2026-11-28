@@ -38,6 +38,32 @@ export type MissingToolChoice =
   | { action: 'install' }
   | { action: 'cancel' }
 
+export type McpAuthPrompt =
+  | {
+      runtimeSessionId: string
+      kind: 'oauth'
+      connector: {
+        id: string
+        title: string
+        publisher: string
+        authorizationOrigin: string
+        homepageUrl?: string
+      }
+    }
+  | {
+      runtimeSessionId: string
+      kind: 'api-key'
+      connector: {
+        id: string
+        title: string
+        publisher: string
+        obtainUrl: string
+        homepageUrl?: string
+      }
+    }
+
+export type McpAuthChoice = { action: 'authenticated' } | { action: 'cancel' }
+
 export type AgentUserInteractionOption = {
   label: string
   description: string
@@ -62,6 +88,7 @@ export type AgentUserInteractionRequest = {
   cwd?: string
   projectName?: string
   missingTool?: MissingToolPrompt
+  mcpAuth?: McpAuthPrompt
 }
 
 export type AgentUserInteractionAnswer = {
@@ -81,4 +108,5 @@ export type AgentUserInteractionResponse = {
   globalNote?: string
   error?: string
   missingToolChoice?: MissingToolChoice
+  mcpAuthChoice?: McpAuthChoice
 }

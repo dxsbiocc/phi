@@ -4,11 +4,21 @@ import type {
   InstallerOptions,
   LocalRegistry,
   PackageRequest,
+  RegistryPackageEntry,
   RegistryTrustTier
 } from './installer-types'
 import type { installPackages } from './lifecycle'
 import type { PackageType } from './manifest'
 import type { LoadedKnownRegistries } from './registries'
+
+export type CapabilityAuthKind = 'oauth' | 'api-key'
+
+export interface CapabilityAuthReceipt {
+  id: string
+  kind: CapabilityAuthKind
+  status: 'authenticated' | 'cancelled' | 'unsupported'
+  homepageUrl?: string
+}
 
 export interface CapabilityCandidate {
   candidateId: string
@@ -22,6 +32,8 @@ export interface CapabilityCandidate {
   installed: boolean
   enabled: boolean
   size: number
+  authRequired?: CapabilityAuthKind
+  authenticated?: boolean
 }
 
 export interface CapabilitySearchResult {
@@ -63,6 +75,7 @@ export type CapabilityInstallResult =
       root: Required<PackageRequest>
       packages: InstalledPackage[]
       usage: Array<{ type: PackageType; id: string; path: string }>
+      authentication?: CapabilityAuthReceipt[]
     }
   | { ok: false; installed: false; status: 'denied' | 'cancelled'; message: string }
 
@@ -103,6 +116,14 @@ export interface CapabilityServiceDependencies {
     available: boolean
     notice?: string
   }>
+  inspectMcpAuth?: (
+    params: {
+      registry: LocalRegistry
+      entry: RegistryPackageEntry
+      installed?: InstalledPackage
+    },
+    signal?: AbortSignal
+  ) => Promise<{ authRequired?: CapabilityAuthKind; authenticated?: boolean } | undefined>
   confirm: (request: CapabilityApprovalRequest, context: PhiHostRequestContext) => Promise<boolean>
   installerOptions?: (context: PhiHostRequestContext) => Promise<InstallerOptions>
   afterInstall?: (

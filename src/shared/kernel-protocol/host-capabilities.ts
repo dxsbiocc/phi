@@ -892,7 +892,7 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
       })
       .strict(),
     result: jsonObjectSchema,
-    ...service(NETWORK_SERVICE_TIMEOUT_MS, true)
+    ...user()
   },
   'capabilities.cancel': {
     params: capabilityIdentitySchema,
